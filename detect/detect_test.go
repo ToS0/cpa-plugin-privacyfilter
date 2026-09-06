@@ -392,3 +392,45 @@ func TestSecrets_UnavailableWithoutTag(t *testing.T) {
 		t.Fatalf("NewSecrets error = %v, want ErrSecretsUnavailable", err)
 	}
 }
+
+// TestComposite_AddressWithTermIsReplacedWhole: the term list outranks the
+// structural patterns, but an e-mail address that contains a term, the
+// company domain or a name, must not be split into a clear local part and a
+// domain pseudonym. The e-mail match is promoted and wins as a whole; an
+// address without a term inside keeps its usual place in the order.
+func TestComposite_AddressWithTermIsReplacedWhole(t *testing.T) {
+	domain := "muster-gmbh.de"
+	addr := "ingrid.muster" + "@" + domain
+	text := "mail " + addr + " site " + domain
+	c := detect.NewComposite(
+		func(v string) bool { return strings.HasPrefix(v, "d-") },
+		fakeDetector{"terms", detect.KindDomain, []string{domain}},
+		fakeDetector{"patterns", detect.KindEmail, []string{addr}},
+	)
+	got := c.Scan(text)
+	assertDisjointSorted(t, text, got)
+	if len(got) != 2 {
+		t.Fatalf("Scan = %+v, want the whole address and the lone domain", got)
+	}
+	if got[0].Kind != detect.KindEmail || got[0].Value != addr {
+		t.Fatalf("first match = %+v, want the whole address as email", got[0])
+	}
+	if got[1].Kind != detect.KindDomain || got[1].Value != domain {
+		t.Fatalf("second match = %+v, want the lone domain as domain", got[1])
+	}
+
+	// Second pass over the plugin's own output: the domain inside the
+	// address is now a pseudonym and excluded; the address around it must
+	// not be promoted and replaced again.
+	pseudo := "ingrid.muster" + "@" + "d-0badcafe0bad.invalid"
+	c2 := detect.NewComposite(
+		func(v string) bool { return strings.HasPrefix(v, "d-") },
+		fakeDetector{"terms", detect.KindDomain, []string{"d-0badcafe0bad.invalid"}},
+		fakeDetector{"patterns", detect.KindEmail, []string{pseudo}},
+	)
+	// The e-mail match loses to the span of the excluded pseudonym as
+	// usual, so nothing is reported.
+	if got := c2.Scan("mail " + pseudo); got != nil {
+		t.Fatalf("second pass Scan = %+v, want nil", got)
+	}
+}

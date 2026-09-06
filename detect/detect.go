@@ -373,6 +373,43 @@ func NewComposite(exclude func(value string) bool, layers ...Detector) *Composit
 // Name implements Detector.
 func (c *Composite) Name() string { return "composite" }
 
+// promoteAddresses returns the e-mail matches of later layers that contain
+// a match of an earlier layer, so that Merge accepts them ahead of every
+// layer. Without it the precedence of the term list splits an address: the
+// domain term wins over the longer e-mail match of the structural patterns,
+// the local part stays in clear text, and "ingrid.muster@" leaves next to a
+// domain pseudonym. An address that carries a confidential domain or name
+// is confidential as a whole and is replaced as one KindEmail. An excluded
+// inner match, a pseudonym of an earlier pass, does not promote: the
+// address around it is already the plugin's own output.
+func promoteAddresses(layers [][]Match) []Match {
+	var promoted []Match
+	for li := 1; li < len(layers); li++ {
+		for _, m := range layers[li] {
+			if m.Kind != KindEmail || m.excluded {
+				continue
+			}
+			if containsEarlier(layers[:li], m) {
+				promoted = append(promoted, m)
+			}
+		}
+	}
+	return promoted
+}
+
+// containsEarlier reports whether m fully contains a non-excluded match of
+// one of the given layers.
+func containsEarlier(earlier [][]Match, m Match) bool {
+	for _, layer := range earlier {
+		for _, n := range layer {
+			if !n.excluded && n.Start >= m.Start && n.End <= m.End && n.Start < n.End {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Scan implements Detector: it scans with every layer, applies Exclude, and
 // returns Merge over the layers in order.
 func (c *Composite) Scan(text string) []Match {
@@ -401,7 +438,7 @@ func (c *Composite) Scan(text string) []Match {
 		}
 		layers = append(layers, hits)
 	}
-	merged := Merge(layers...)
+	merged := Merge(append([][]Match{promoteAddresses(layers)}, layers...)...)
 	if excluded == 0 {
 		return merged
 	}

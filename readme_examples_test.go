@@ -118,6 +118,9 @@ func TestRoundTrip_ReadmeExamples(t *testing.T) {
 		if got == e.value || strings.Contains(got, e.value) {
 			t.Errorf("%s: %q was not replaced (got %q)", e.kind, e.value, got)
 		}
+		if e.kind == "email" && !strings.HasPrefix(got, "u-") {
+			t.Errorf("email: the address must be replaced as a whole, got %q", got)
+		}
 	}
 	modelSees := out.Messages[1].Content
 	for _, e := range examples {

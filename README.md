@@ -32,7 +32,7 @@ Every kind of value gets a pseudonym of its own shape, so the model can still te
 | `host` | `helios-nas01` | `h-5aa7c84ea894` |
 | `domain` | `muster-gmbh.de` | `d-27133c5f173b.invalid` |
 | `person` | `Ingrid Muster` | `Lea Schuricht` |
-| `email` | `ingrid.muster@muster-gmbh.de` | `ingrid.muster@d-27133c5f173b.invalid` |
+| `email` | `ingrid.muster@muster-gmbh.de` | `u-065c3e6cd8a3@d-27133c5f173b.invalid` |
 | `cidr` | `10.20.0.0/16` | `100.67.0.0/16` |
 | `ipv4` | `10.20.30.7` | `100.67.154.131` |
 | `ipv6` | `2a01:4f8:1c17:6f3::2` | `fdff:5046:5346:7dbe:ca22:4379:1d53:1cb` |
@@ -390,7 +390,7 @@ Pseudonym shapes are chosen so that no real value can look like one: `100.64.0.0
 
 ### Forward and return path
 
-The forward path walks every string of the JSON body except those on a deny list (identifiers, tool names, model names, thinking blocks and their signatures) and runs the detection layers in fixed order: the term list, the structural patterns, the path layer, the original plugin's detection (packyme with the Gitleaks rules), betterleaks. Overlapping hits are merged, the longest wins. A hit of the original detection is pseudonymized by kind: an e-mail address as `email`, an IP address as `ipv4` or `ipv6`, everything else, secrets, phone and ID numbers, bank cards, as an opaque `secret` token that is restored like any other pseudonym. The return path scans the response body in one pass over the same deny list and swaps pseudonyms back only at token boundaries, so a pseudonym embedded in a longer identifier is left alone.
+The forward path walks every string of the JSON body except those on a deny list (identifiers, tool names, model names, thinking blocks and their signatures) and runs the detection layers in fixed order: the term list, the structural patterns, the path layer, the original plugin's detection (packyme with the Gitleaks rules), betterleaks. Overlapping hits are merged, the longest wins. One exception: an e-mail address that contains a term of your list, the company domain or a name, is replaced as a whole and as `email`, so the local part does not stay in clear text next to a domain pseudonym. A hit of the original detection is pseudonymized by kind: an e-mail address as `email`, an IP address as `ipv4` or `ipv6`, everything else, secrets, phone and ID numbers, bank cards, as an opaque `secret` token that is restored like any other pseudonym. The return path scans the response body in one pass over the same deny list and swaps pseudonyms back only at token boundaries, so a pseudonym embedded in a longer identifier is left alone.
 
 Streamed responses are restored chunk by chunk. Because a pseudonym may be split across two deltas, the plugin holds back the tail of the text that could still grow into a pseudonym, restores a pseudonym that is complete and cannot grow right away, and flushes the held tail as a synthetic delta before the block or the message ends. Splitting at every byte position is covered by the tests, including a pseudonym whose last byte could begin another one.
 
