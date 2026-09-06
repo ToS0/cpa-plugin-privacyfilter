@@ -29,6 +29,10 @@ Usage:
   sudo machine-ids.py ...        adds the DMI serials and product uuid
   machine-ids.py --lan           also the other machines of the LAN (mDNS
                                  names, reverse DNS of the neighbour table)
+  machine-ids.py --check terms.txt
+                                 read an existing term file and list every
+                                 term that is also a command or an ordinary
+                                 word on this machine; collects nothing
 
 Only the standard library is used. External commands are optional and
 skipped when missing: ip, lsblk, ssh-keygen, nmcli, gpg, zerotier-cli,
@@ -75,6 +79,15 @@ SHELL_WORDS = {"cd", "time", "test", "echo", "set", "read", "type", "exit", "kil
                "function", "sudo", "root", "home", "tmp", "log", "logs", "bin", "lib", "etc", "opt",
                "var", "usr", "dev", "proc", "sys", "run", "mnt", "media", "boot", "config", "data",
                "main", "master", "dev", "prod", "stage", "live", "new", "old", "temp", "cache"}
+
+# Role words people name machines after. Each is a word in prose and in
+# configs, so a host of this name pollutes every text that mentions the role.
+GENERIC_HOSTS = {"nas", "san", "server", "client", "host", "node", "box", "pc", "laptop", "desktop",
+                 "notebook", "phone", "tablet", "printer", "scanner", "router", "switch", "gateway",
+                 "firewall", "proxy", "storage", "cloud", "mail", "web", "www", "db", "database",
+                 "office", "lab", "work", "workstation", "vm", "container", "camera", "tv", "media",
+                 "plex", "kodi", "pihole", "dns", "dhcp", "vpn", "wifi", "ap", "iot", "hub", "bridge",
+                 "monitor", "display", "kiosk", "gaming", "game", "study", "kitchen", "garage"}
 
 # Account names that are ordinary words; a person term for them would replace
 # the word in every prompt.
@@ -141,7 +154,7 @@ class Terms:
         pattern = r"(?i)\b" + re.escape(name).replace("\\-", "-") + r"(?:\.[a-z0-9-]+)*\b"
         self.lines.append('{regex: "%s", kind: host}' % pattern.replace("\\", "\\\\"))
         self.counts["host"] += 1
-        if name in GENERIC_ACCOUNTS or name in GENERIC_LABELS or name in SHELL_WORDS or shutil.which(name):
+        if is_word(name):
             # The term stays, the machine is real; but every occurrence of
             # the word will be replaced, in commands and prose alike.
             self.note("host %s is also a command or an ordinary word: every '%s' in any text will be "
@@ -629,6 +642,47 @@ BEGIN = "# --- machine-ids begin: %s ---"
 END = "# --- machine-ids end: %s ---"
 
 
+def is_word(name):
+    """A host or account name that is also a command or an everyday word."""
+    n = name.lower()
+    return (n in GENERIC_ACCOUNTS or n in GENERIC_LABELS or n in SHELL_WORDS or n in GENERIC_HOSTS
+            or bool(shutil.which(n)))
+
+
+def check_terms(path):
+    """Read a term file and print every term that is a word on this machine.
+
+    A regex term of the form the script writes is checked by its bare name;
+    other regex terms are skipped, they carry their own boundaries. Prints the
+    term itself, since the person running this owns the file.
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError as e:
+        print("cannot read %s: %s" % (path, e.strerror), file=sys.stderr)
+        return 1
+    hits = 0
+    for n, line in enumerate(lines, 1):
+        s = line.split("#", 1)[0].strip() if not line.lstrip().startswith("{") else line.strip()
+        if not s:
+            continue
+        m = re.match(r'\{regex:\s*"\(\?i\)\\\\b([a-z0-9-]+)\(\?:', s)
+        if m:
+            value, kind = m.group(1), "host"
+        elif s.startswith("{"):
+            continue
+        else:
+            parts = s.split()
+            value, kind = parts[0], parts[1] if len(parts) > 1 else "host"
+        if kind in ("host", "person", "path_segment", "domain") and re.fullmatch(r"[A-Za-z][a-z0-9-]{1,11}", value) and is_word(value):
+            hits += 1
+            print("line %d: %s %s   is also a command or an ordinary word here; every '%s' in any text will be replaced"
+                  % (n, value, kind, value))
+    print("%d of %d lines checked, %d word-like terms" % (sum(1 for l in lines if l.strip() and not l.lstrip().startswith("#")), len(lines), hits))
+    return 0
+
+
 def merge_into(path, block, host):
     """Replace the block of this host in the term file, or append it.
 
@@ -721,7 +775,11 @@ def main():
     ap.add_argument("--lan", action="store_true",
                     help="add the other machines of the LAN: mDNS names via avahi-browse, reverse DNS of the neighbour table")
     ap.add_argument("--stdout", action="store_true", help="print the list without asking anything")
+    ap.add_argument("--check", metavar="TERMS",
+                    help="list the terms of this file that are also a command or an ordinary word here, collect nothing")
     args = ap.parse_args()
+    if args.check:
+        return check_terms(args.check)
     if len(sys.argv) == 1 and sys.stdin.isatty():
         for k, v in interactive().items():
             setattr(args, k, v)

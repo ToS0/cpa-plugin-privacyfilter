@@ -266,6 +266,7 @@ Options for scripts and for a look before merging:
 | `--merge TERMS`    | replace or append this machine's block in an existing term file, numbered backup first     |
 | `--lan`            | add the other machines of the LAN: mDNS names via avahi, reverse DNS of the neighbour table |
 | `--all-interfaces` | include container and VM interfaces (veth, docker, virbr, ...)                             |
+| `--check TERMS`    | read an existing term file and list every term that is also a command or an ordinary word on this machine; collects nothing |
 
 The block of a machine sits between two marker comments that carry its host name. Running the script again on the
 same machine replaces that block and leaves the blocks of other machines alone, so the term file of the proxy can
@@ -312,8 +313,9 @@ through it once when you set up, and again whenever a customer, a machine or a p
    [Paths and file names](#paths-and-file-names).
 6. **The words.** Read through `terms.txt` once and strike every term that is also an ordinary word: `backup`,
    `admin`, `data`, `test`, `nas`. Such a term breaks commands and configs for the model. Replace it by a
-   regular expression that matches only the form you mean, or leave it to the directory layer. Read the notes
-   the script wrote: it flags a host name that is also a command. From now on, name every new machine, share,
+   regular expression that matches only the form you mean, or leave it to the directory layer. Run
+   `machine-ids.py --check terms.txt` on the proxy host: it lists every term that is also a command or an ordinary
+   word there. From now on, name every new machine, share,
    service and network with a token that is not a word, `nas01` rather than `nas`, see
    [What belongs in the list](#what-belongs-in-the-list-and-what-does-not).
 7. **The model.** Put the note from [Telling the model](#telling-the-model) into the `CLAUDE.md` of every project
