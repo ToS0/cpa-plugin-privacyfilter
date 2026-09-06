@@ -55,7 +55,9 @@ func forward(t *testing.T, headers http.Header, body []byte) pipeline {
 	if err != nil {
 		t.Fatalf("filter.New: %v", err)
 	}
-	paths, err := detect.NewPaths(detect.PathsConfig{ReplaceUnknown: true})
+	// The strongest setting: file names are replaced too, so the fixture's
+	// file name must not survive either.
+	paths, err := detect.NewPaths(detect.PathsConfig{ReplaceUnknown: true, AllFilenames: true})
 	if err != nil {
 		t.Fatalf("NewPaths: %v", err)
 	}

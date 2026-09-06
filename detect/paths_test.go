@@ -26,7 +26,7 @@ func values(ms []detect.Match) string {
 }
 
 func TestPaths_SegmentsOfAbsolutePath(t *testing.T) {
-	d := newPaths(t, detect.PathsConfig{ReplaceUnknown: true})
+	d := newPaths(t, detect.PathsConfig{ReplaceUnknown: true, AllFilenames: true})
 	text := "Der Code liegt in /home/mwendler/Projekte/kunde-x/src/main.go, die Doku in /home/mwendler/Projekte/kunde-x/README.md."
 	got := d.Scan(text)
 	assertDisjointSorted(t, text, got)
@@ -42,7 +42,7 @@ func TestPaths_SegmentsOfAbsolutePath(t *testing.T) {
 }
 
 func TestPaths_PreservedAndSkipped(t *testing.T) {
-	d := newPaths(t, detect.PathsConfig{ReplaceUnknown: true, Preserve: []string{"Container"}})
+	d := newPaths(t, detect.PathsConfig{ReplaceUnknown: true, AllFilenames: true, Preserve: []string{"Container"}})
 	cases := map[string]string{
 		"/mnt/part4/Container/cliproxyapi/config.yaml": "path_segment:part4 path_segment:cliproxyapi filename:config.yaml",
 		"/etc/systemd/system/x.service":                "filename:x.service",
@@ -73,7 +73,7 @@ func j(segs ...string) string { return "/" + strings.Join(segs, "/") }
 // or the machine is still reported, a unit name included, because a unit
 // is often named after what it serves.
 func TestPaths_OrdinaryNamesStay(t *testing.T) {
-	d := newPaths(t, detect.PathsConfig{ReplaceUnknown: true})
+	d := newPaths(t, detect.PathsConfig{ReplaceUnknown: true, AllFilenames: true})
 	untouched := []string{
 		j("etc", "hosts"), j("etc", "hostname"), j("etc", "resolv.conf"), j("etc", "ssh", "sshd_config"),
 		j("etc", "ssh", "ssh_host_ed25519_key.pub"), j("etc", "NetworkManager", "system-connections"),
@@ -111,7 +111,7 @@ func TestPaths_OrdinaryNamesStay(t *testing.T) {
 }
 
 func TestPaths_ProseAndURLsUntouched(t *testing.T) {
-	d := newPaths(t, detect.PathsConfig{ReplaceUnknown: true})
+	d := newPaths(t, detect.PathsConfig{ReplaceUnknown: true, AllFilenames: true})
 	for _, text := range []string{
 		"and/or, km/h, TCP/IP, 1/2 und 3/4",
 		"https://example.com/kunde-x/docs",
@@ -131,6 +131,46 @@ func TestPaths_ProseAndURLsUntouched(t *testing.T) {
 	}
 }
 
+// TestPaths_FilenamesLeftToTerms: by default the layer reports directories
+// only. A file name stays as it is, whatever it is called, and a customer's
+// name inside a file name is the term layer's business: it runs first, hits
+// at the word boundary, and the composite keeps that hit.
+func TestPaths_FilenamesLeftToTerms(t *testing.T) {
+	d := newPaths(t, detect.PathsConfig{ReplaceUnknown: true})
+	cases := map[string]string{
+		j("home", "mwendler", "Projekte", "kunde-x", "src", "main.go"): "path_segment:mwendler path_segment:Projekte path_segment:kunde-x",
+		j("home", "mwendler", "Projekte", "kunde-x", "README.md"):      "path_segment:mwendler path_segment:Projekte path_segment:kunde-x",
+		j("opt", "myapp", "kunde-x", "config.yaml"):                    "path_segment:myapp path_segment:kunde-x",
+		j("etc", "nginx", "sites-enabled", "kunde-x.conf"):             "",
+		j("home", "mwendler", "Projekte", "kunde-x", "Makefile"):       "path_segment:mwendler path_segment:Projekte path_segment:kunde-x",
+		j("home", "mwendler", "media-files"):                           "path_segment:mwendler path_segment:media-files", // no extension: a directory
+	}
+	for text, want := range cases {
+		got := d.Scan(text)
+		assertDisjointSorted(t, text, got)
+		if values(got) != want {
+			t.Errorf("Scan(%q) = %q, want %q", text, values(got), want)
+		}
+	}
+
+	// With the term layer in front, the customer's name is found inside the
+	// file name, as the term's own kind, while the ordinary file name and
+	// the ordinary directory stay.
+	terms, err := detect.NewTerms(detect.TermsConfig{WordBoundary: true, Terms: []detect.Term{
+		{Value: "kunde-x", Kind: detect.KindPathSegment},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := detect.NewComposite(nil, terms, d)
+	text := j("home", "mwendler", "docs", "kunde-x-vertrag.pdf") + " and " + j("home", "mwendler", "docs", "README.md")
+	got := c.Scan(text)
+	assertDisjointSorted(t, text, got)
+	if want := "path_segment:mwendler path_segment:kunde-x path_segment:mwendler"; values(got) != want {
+		t.Fatalf("composite Scan = %q, want %q", values(got), want)
+	}
+}
+
 func TestPaths_KnownOnly(t *testing.T) {
 	d := newPaths(t, detect.PathsConfig{ReplaceUnknown: false, Known: map[string]bool{"kunde-x": true}})
 	got := d.Scan("/home/mwendler/Projekte/kunde-x/src/main.go")
@@ -140,7 +180,7 @@ func TestPaths_KnownOnly(t *testing.T) {
 }
 
 func TestPaths_UnicodeSegments(t *testing.T) {
-	d := newPaths(t, detect.PathsConfig{ReplaceUnknown: true})
+	d := newPaths(t, detect.PathsConfig{ReplaceUnknown: true, AllFilenames: true})
 	text := "in /home/mwendler/Bücher/Übersicht.txt steht es"
 	got := d.Scan(text)
 	assertDisjointSorted(t, text, got)

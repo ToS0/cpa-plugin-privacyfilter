@@ -155,7 +155,7 @@ so it keeps working normally, and the plugin can tell a pseudonym from a real va
 | `fingerprint`  | SSH key fingerprints                          | `SHA256:PF` + 41 letters and digits         |
 | `serial`       | serial numbers                                | `PF-<12 upper-case letters and digits>`     |
 | `path_segment` | a directory name, replaced inside paths       | `d-<12 hex>`                                |
-| `filename`     | a file name; the extension is kept            | `f-<12 hex><ext>`                           |
+| `filename`     | a file name; the extension is kept. Used by the path layer with `filenames: all` only | `f-<12 hex><ext>`      |
 | `secret`       | anything else                                 | `PF_<12 hex>`                               |
 
 The same value gets the same pseudonym for the whole conversation, another conversation gets other pseudonyms.
@@ -182,6 +182,42 @@ The pseudonyms are derived from the secret, not stored anywhere.
 
 `terms` in `config.yaml` takes the same entries in YAML form and is meant for a handful of values; the file is
 for the list you maintain.
+
+### Paths and file names
+
+A path such as `/home/mwendler/Projekte/kunde-x/src/main.go` carries its confidential part in the middle: the
+login name, the customer. The path layer, switched on with `path.enabled: true`, takes a path apart at its slashes
+and treats the directories and the file name differently, because they play different roles.
+
+**Directories** are replaced when they are unknown. A built-in list of a few hundred ordinary names, `home`, `usr`,
+`etc`, `src`, `build`, `docs`, `node_modules` and the like, stays as it is, so the model still sees a home
+directory and a source tree. Every other directory becomes `d-<12 hex>`, whether it is on your term list or not.
+That is the safety net for the customer directory nobody thought to list: a name that identifies somebody is
+gone even if the list does not know it. The model does not need the real name to work there. It sees the same
+pseudonym for the same directory throughout the conversation, writes it into its tool calls, and the client gets
+the real path back, so a file lands where it should. What the model loses is the meaning of the name: it cannot
+tell from `d-<hex>` that a directory holds media files. When that gets in the way, add the harmless names to
+`path.preserve`, or set `replace_unknown: false` to replace only directories that are also terms, at the price of
+the safety net.
+
+**File names** are left alone by default. `README.md`, `main.go`, `config.yaml` say what a file is, they are the
+same in a million repositories, and they are the index by which a model finds its way around a tree: replacing
+them protects nothing and costs every `ls` its meaning. A file named after a customer carries the customer's
+name, and that name is a term, which the term layer finds inside the file name at its word boundary:
+`kunde-x-vertrag.pdf` goes out as `d-<hex>-vertrag.pdf`. A file name without an extension, `Makefile`, `LICENSE`,
+is on the preserve list; other names without an extension count as directories. `path.filenames: all` restores
+the old behaviour and replaces every file name outside the preserve list as `f-<12 hex><ext>`.
+
+```yaml
+path:
+  enabled: true
+  replace_unknown: true    # directories: replace every unknown one (default); false replaces terms only
+  filenames: terms         # file names: replace only where a term matches (default); all replaces every one
+  preserve: [media-files]  # directory names of yours that identify nobody and should stay readable
+```
+
+The plugin never replaces on the way back. A file name the model invents that happens to look like a pseudonym
+reaches the client as it is; with the default the model sees real file names and has no pattern to imitate.
 
 ## Filling the list with machine-ids.py
 
@@ -287,7 +323,7 @@ like the original:
 | `terms`                  | array  | `[]`           | Values to treat as confidential, each `{value: ..., kind: ...}` or `{regex: ..., kind: ...}` with an optional `ignore_case: true`. Takes precedence over every other detection layer.                                                                                                                                       |
 | `terms_file`             | string | `""`           | The term list, see [The term list](#the-term-list). A relative path resolves from the plugin directory.                                                                                                                                                                                                                   |
 | `patterns`               | object | all on but url | Structural detectors: `ipv4`, `ipv6`, `cidr`, `mac`, `email`, `iban`, `uuid`, `hexid`, `fingerprint`, `serial` default to `true`; `url` is off. `uuid` covers disk and machine UUIDs, `hexid` 32-digit and `0x`-prefixed 16-digit hex ids such as a WWN or machine-id, `fingerprint` SSH host-key fingerprints (`SHA256:…`), `serial` a serial number that follows a label such as `Serial Number:`, `ID_SERIAL_SHORT=`, `"serial":`, `iSerial`, `Seriennummer:` or `s/n:`. |
-| `path`                   | object | disabled       | Segment-wise path pseudonymization: `enabled` (default `false`), `replace_unknown` (default `true`, every segment outside the preserve list is replaced; `false` replaces only segments that are also terms), `preserve` (segments added to the built-in list of ordinary directory names such as `home`, `usr`, `src`). |
+| `path`                   | object | disabled       | Segment-wise path pseudonymization, see [Paths and file names](#paths-and-file-names): `enabled` (default `false`), `replace_unknown` (default `true`, every directory outside the preserve list is replaced; `false` replaces only directories that are also terms), `filenames` (`terms`, the default, replaces a file name only where a term matches inside it; `all` replaces every file name outside the preserve list), `preserve` (names added to the built-in list of ordinary segments such as `home`, `usr`, `src`). |
 | `packyme`                | object | enabled        | `enabled` toggles the packyme/privacy-filter layer with the gitleaks rules.                                                                                                                                                                                                                                                |
 | `secrets`                | object | disabled       | `enabled` and `rules_toml` for the betterleaks layer. Only effective in a binary built with the `betterleaks` tag; enabling it in a plain build fails registration.                                                                                                                                                         |
 | `restore.stream`         | bool   | `true`         | Restore pseudonyms in streamed responses. Non-streamed responses are always restored.                                                                                                                                                                                                                                     |
@@ -348,9 +384,9 @@ both directions are handled.
 - A serial number is only detected behind a label. A bare serial in running text, a git commit hash, an image
   digest or a DNS zone serial are left alone on purpose, so a serial printed without any label reaches the
   model unchanged. Add it to the term list if it matters.
-- With `path.enabled`, the model sees every file name as `f-<12 hex><ext>`. When it creates a new file it tends
-  to pick a name of the same shape, which is in no mapping table and reaches the client as is. Rename the file;
-  the content is restored normally.
+- With `path.filenames: all`, the model sees every file name as `f-<12 hex><ext>`. When it creates a new file it
+  tends to pick a name of the same shape, which is in no mapping table and reaches the client as is. Rename the
+  file; the content is restored normally. The default `terms` leaves file names readable and avoids this.
 
 ## Building from source
 

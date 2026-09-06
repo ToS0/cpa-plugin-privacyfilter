@@ -114,7 +114,7 @@ kind 决定假名长什么样。模型看到的东西与原值形状相同，所
 | `fingerprint`  | SSH 密钥指纹                               | `SHA256:PF` + 41 个字母数字            |
 | `serial`       | 序列号                                     | `PF-<12 位大写字母数字>`               |
 | `path_segment` | 目录名，在路径内替换                       | `d-<12 位十六进制>`                    |
-| `filename`     | 文件名；扩展名保留                         | `f-<12 位十六进制><扩展名>`            |
+| `filename`     | 文件名；扩展名保留。仅路径层在 `filenames: all` 时使用 | `f-<12 位十六进制><扩展名>`     |
 | `secret`       | 其他一切                                   | `PF_<12 位十六进制>`                   |
 
 同一个值在整个会话内得到同一个假名，另一个会话得到另一套假名。假名由密钥派生，不存储在任何地方。
@@ -128,6 +128,24 @@ kind 决定假名长什么样。模型看到的东西与原值形状相同，所
 - **文件是明文。** 它装的正是插件要挡在线路之外的那些值。让它和它的备份只对代理的用户可读，永远不要把它粘贴进经过代理的会话。
 
 `config.yaml` 中的 `terms` 接受同样的 YAML 形式条目，适合少数几个值；文件才是你维护的列表。
+
+### 路径与文件名
+
+像 `/home/mwendler/Projekte/kunde-x/src/main.go` 这样的路径，敏感的部分在中间：登录名、客户。用 `path.enabled: true` 开启的路径层按斜杠拆开路径，对目录和文件名区别对待，因为它们扮演的角色不同。
+
+**目录**在未知时被替换。内置列表里的几百个普通名字，`home`、`usr`、`etc`、`src`、`build`、`docs`、`node_modules` 之类，保持原样，所以模型仍能看到主目录和源码树。其他所有目录都变成 `d-<12 位十六进制>`，不管它是否在你的词条列表里。这是给没人想到要列出的客户目录准备的安全网：能标识某人的名字即使列表不认识也会消失。模型在那里工作不需要真实名字。整个会话中同一个目录它看到的是同一个假名，把它写进工具调用，客户端拿回真实路径，文件落在该落的地方。模型失去的是名字的含义：它无法从 `d-<hex>` 看出某个目录放的是媒体文件。这妨碍工作时，把无害的名字加进 `path.preserve`，或者设 `replace_unknown: false` 只替换同时是词条的目录，代价是失去安全网。
+
+**文件名**默认不动。`README.md`、`main.go`、`config.yaml` 说的是文件是什么，它们在上百万个仓库里都一样，也是模型在目录树里定位的索引：替换它们保护不了任何东西，却让每个 `ls` 失去意义。以客户命名的文件带着客户的名字，而那个名字是词条，词条层在文件名内的词边界处找到它：`kunde-x-vertrag.pdf` 出站时是 `d-<hex>-vertrag.pdf`。没有扩展名的文件名，`Makefile`、`LICENSE`，在保留列表里；其他没有扩展名的名字按目录处理。`path.filenames: all` 恢复旧行为，把保留列表之外的每个文件名替换为 `f-<12 位十六进制><扩展名>`。
+
+```yaml
+path:
+  enabled: true
+  replace_unknown: true    # 目录：替换所有未知目录（默认）；false 只替换词条
+  filenames: terms         # 文件名：只在词条匹配处替换（默认）；all 替换所有
+  preserve: [media-files]  # 你自己的、不标识任何人、应保持可读的目录名
+```
+
+插件在回程中从不替换。模型编造的、碰巧像假名的文件名会原样到达客户端；使用默认值时模型看到的是真实文件名，没有可模仿的模式。
 
 ## 用 machine-ids.py 填写列表
 
@@ -213,7 +231,7 @@ plugins:
 | `terms`                 | array  | `[]`         | 视为敏感的值，每项为 `{value: ..., kind: ...}` 或 `{regex: ..., kind: ...}`，可加 `ignore_case: true`。优先级高于其他所有检测层。                                              |
 | `terms_file`            | string | `""`         | 词条列表，见[词条列表](#词条列表)。相对路径基于插件目录解析。                                                                                                        |
 | `patterns`              | object | 除 url 外全部开启   | 结构化检测器：`ipv4`、`ipv6`、`cidr`、`mac`、`email`、`iban`、`uuid`、`hexid`、`fingerprint`、`serial` 默认 `true`；`url` 关闭。`uuid` 覆盖磁盘和机器 UUID，`hexid` 覆盖 32 位及 `0x` 前缀的 16 位十六进制标识（如 WWN、machine-id），`fingerprint` 覆盖 SSH 主机密钥指纹（`SHA256:…`），`serial` 覆盖跟在 `Serial Number:`、`ID_SERIAL_SHORT=`、`"serial":`、`iSerial`、`Seriennummer:`、`s/n:` 等标签之后的序列号。 |
-| `path`                  | object | 关闭           | 按路径段假名化：`enabled`（默认 `false`）、`replace_unknown`（默认 `true`，替换保留列表之外的所有段；`false` 时只替换同时出现在词条中的段）、`preserve`（在内置常见目录名列表如 `home`、`usr`、`src` 之外追加保留的段）。 |
+| `path`                  | object | 关闭           | 按路径段假名化，见[路径与文件名](#路径与文件名)：`enabled`（默认 `false`）、`replace_unknown`（默认 `true`，替换保留列表之外的所有目录；`false` 时只替换同时是词条的目录）、`filenames`（默认 `terms`，只在词条匹配处替换文件名；`all` 替换保留列表之外的所有文件名）、`preserve`（在内置常见段名列表如 `home`、`usr`、`src` 之外追加保留的名字）。 |
 | `packyme`               | object | 开启           | `enabled` 控制使用 gitleaks 规则的 packyme/privacy-filter 层。                                                                                             |
 | `secrets`               | object | 关闭           | betterleaks 层的 `enabled` 和 `rules_toml`。只在带 `betterleaks` 标签构建的二进制中有效；在普通构建中开启会导致注册失败。                                                              |
 | `restore.stream`        | bool   | `true`       | 在流式响应中还原假名。非流式响应总是被还原。                                                                                                                           |
@@ -247,7 +265,7 @@ plugins:
 - `path.enabled` 默认 `false`。在你的环境中确认流式还原正常后再开启：工具调用中半还原的路径比泄露一条路径危害更大。
 - betterleaks 层只存在于带 `betterleaks` 标签的构建中，共享库体积约为原来的三倍。
 - 序列号只在标签之后才被检测。正文中裸露的序列号、git 提交哈希、镜像摘要或 DNS 区域序列号被有意放过，因此没有任何标签的序列号会原样到达模型。如果它重要，把它加进词条列表。
-- 开启 `path.enabled` 后，模型看到的每个文件名都是 `f-<12 位十六进制><扩展名>`。它新建文件时往往会取同样形状的名字，这个名字不在任何映射表中，会原样到达客户端。把文件改名即可，内容会正常还原。
+- 设 `path.filenames: all` 后，模型看到的每个文件名都是 `f-<12 位十六进制><扩展名>`。它新建文件时往往会取同样形状的名字，这个名字不在任何映射表中，会原样到达客户端。把文件改名即可，内容会正常还原。默认的 `terms` 让文件名保持可读，避免了这个问题。
 
 ## 从源码构建
 

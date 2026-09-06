@@ -53,8 +53,10 @@ func newPseudoPlugin(t *testing.T, override map[string]any) *privacyFilterPlugin
 			"ipv4": true, "ipv6": true, "cidr": true,
 			"mac": true, "email": true, "iban": true, "url": false,
 		},
-		"packyme":  map[string]any{"enabled": true},
-		"path":     map[string]any{"enabled": true, "replace_unknown": true},
+		"packyme": map[string]any{"enabled": true},
+		// filenames: all is the strongest setting; the corpus test below
+		// demands that the fixture's file name does not survive either.
+		"path":     map[string]any{"enabled": true, "replace_unknown": true, "filenames": "all"},
 		"on_error": string(OnErrorBlock),
 	}
 	for k, v := range override {
@@ -341,6 +343,52 @@ func TestPseudonymizeRequest_RealShapedToken(t *testing.T) {
 	}
 	if !bytes.Contains(resp.Body, []byte(pseudo.PrefixSecret)) {
 		t.Fatalf("expected an opaque secret pseudonym, got: %s", resp.Body)
+	}
+}
+
+// TestPseudonymizeRequest_FilenamesLeftToTerms: with the default
+// path.filenames of "terms", an ordinary file name survives the forward
+// path while the directories around it are replaced, and a file named after
+// a customer loses the customer's name to the term layer and keeps the rest.
+func TestPseudonymizeRequest_FilenamesLeftToTerms(t *testing.T) {
+	// Paths are joined at run time: a literal path in this source would be
+	// pseudonymized in transit and land here in a different form.
+	tree := strings.Join([]string{"", "home", "mwendler", "Projekte", "kunde-x"}, "/")
+	code := tree + "/" + strings.Join([]string{"src", "main.go"}, "/")
+	readme := tree + "/" + "README.md"
+	contract := tree + "/" + "kunde-x-vertrag.pdf"
+	req := map[string]any{
+		"model":    "claude-fable-5-1",
+		"messages": []any{map[string]any{"role": "user", "content": "Lies " + code + ", " + readme + " und " + contract + "."}},
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	// The customer is a term of the list, as it would be in practice; the
+	// fixture list does not carry it, so it is added here.
+	p := newPseudoPlugin(t, map[string]any{
+		"path":  map[string]any{"enabled": true, "replace_unknown": true},
+		"terms": []any{map[string]any{"value": "kunde-x", "kind": "path_segment"}},
+	})
+	resp := beforeAuth(t, p, "req-1", body)
+	if resp.Terminate {
+		t.Fatalf("request terminated: %s", resp.ResponseBody)
+	}
+	out := string(resp.Body)
+	for _, keep := range []string{"/src/" + "main.go", "/" + "README.md", "-vertrag.pdf"} {
+		if !strings.Contains(out, keep) {
+			t.Errorf("%q should survive, body: %s", keep, out)
+		}
+	}
+	for _, gone := range []string{"mwendler", "kunde-x", "Projekte"} {
+		if strings.Contains(out, gone) {
+			t.Errorf("%q leaked, body: %s", gone, out)
+		}
+	}
+	if strings.Count(out, "-vertrag.pdf") != 1 || strings.Contains(out, "f-") {
+		t.Errorf("the customer's file should keep its suffix and get no filename pseudonym, body: %s", out)
 	}
 }
 

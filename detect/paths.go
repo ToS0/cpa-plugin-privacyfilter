@@ -23,6 +23,16 @@ type PathsConfig struct {
 	// Known are the literal values of the term list, consulted when
 	// ReplaceUnknown is false.
 	Known map[string]bool
+	// AllFilenames reports a final segment with a file extension as
+	// KindFileName like any other unknown segment. When false, the default,
+	// the layer leaves file names alone: a file name says what a file is,
+	// README.md, main.go, config.yaml, and is the index by which a model
+	// finds its way around a tree, while the identifying part of a path
+	// sits in the directories. A file named after a customer carries the
+	// customer's name, which the term layer finds inside the file name at
+	// its word boundary; that layer runs first and needs no help from here.
+	// A final segment without an extension is treated as a directory.
+	AllFilenames bool
 }
 
 // defaultPreserve are the segments that identify nothing: the standard
@@ -71,6 +81,11 @@ var defaultPreserve = []string{
 	"pts", "input", "snd", "dri", "bus", "usb", "tty", "console", "video", "fuse", "kvm", "loop-control",
 	// kernel and boot
 	"modules", "vmlinuz", "initrd.img", "initramfs", "config-", "System.map",
+	// files without an extension that every repository has
+	"Makefile", "makefile", "GNUmakefile", "Justfile", "justfile", "Taskfile", "Rakefile", "Gemfile", "Procfile",
+	"Vagrantfile", "Jenkinsfile", "Containerfile", "Podfile", "Brewfile", "Pipfile", "Cargo.lock",
+	"README", "LICENSE", "LICENCE", "COPYING", "NOTICE", "AUTHORS", "CONTRIBUTORS", "CONTRIBUTING", "CHANGELOG",
+	"CHANGES", "HISTORY", "NEWS", "TODO", "VERSION", "INSTALL", "MANIFEST", "CODEOWNERS",
 	// languages, package managers, tools
 	"python", "python3", "site-packages", "dist-packages", "__pycache__", "venv", ".venv",
 	"node", "npm", ".npm", "go", "pkg", "mod", ".cargo", "cargo", "registry", "rustup", ".rustup",
@@ -228,6 +243,9 @@ func (d *pathsDetector) classify(seg string, last bool) (Kind, bool) {
 		return "", false
 	}
 	if last && hasFileExt(seg) {
+		if !d.cfg.AllFilenames {
+			return "", false
+		}
 		return KindFileName, true
 	}
 	return KindPathSegment, true

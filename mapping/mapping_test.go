@@ -246,6 +246,32 @@ func TestRestorer_DomainWithoutReservedSuffix(t *testing.T) {
 	}
 }
 
+// TestRestorer_UnknownShapePassesThrough: a token that has the shape of a
+// pseudonym but is in no table, such as a file name the model invented in
+// the pattern of the ones it saw, reaches the client unchanged. The return
+// path restores, it never detects; this is the contract that keeps a new
+// file from being created under a name of the plugin's own making.
+func TestRestorer_UnknownShapePassesThrough(t *testing.T) {
+	tb := mapping.NewTable(genFunc(func(_ detect.Kind, value string, _ int) string {
+		return map[string]string{"notes.md": "f-aaaaaaaaaaaa.md", "kunde-x": "d-bbbbbbbbbbbb"}[value]
+	}))
+	known := tb.Lookup(detect.KindFileName, "notes.md")
+	seg := tb.Lookup(detect.KindPathSegment, "kunde-x")
+	r := tb.Restorer()
+	invented := "f-" + strings.Repeat("c", 12) + ".md"
+	text := "write " + seg + "/" + invented + " next to " + seg + "/" + known
+	want := "write kunde-x/" + invented + " next to kunde-x/notes.md"
+	if got, _ := r.Restore(text, false); got != want {
+		t.Fatalf("Restore = %q, want %q", got, want)
+	}
+	if n := r.Holdback(text + " "); n != 0 {
+		t.Fatalf("Holdback after a delimiter = %d, want 0", n)
+	}
+	if hits := tb.RestoredHits(); hits[known] != 1 || hits[seg] != 2 || len(hits) != 2 {
+		t.Fatalf("hits = %v, want file 1, segment 2, nothing else", hits)
+	}
+}
+
 // TestStore_SetTTL: the new lifetime applies to a table that is already
 // held, measured from the moment it was stored; a non-positive value is
 // ignored.

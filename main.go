@@ -134,7 +134,7 @@ func buildPlugin(configYAML []byte, pluginDir string, rt *runtimeState) (plugina
 				{
 					Name:        "path",
 					Type:        pluginapi.ConfigFieldTypeObject,
-					Description: "Segment-wise path pseudonymization: enabled (default false until the stream restore is confirmed live), replace_unknown (default true), preserve (segments added to the built-in list of ordinary directory names).",
+					Description: "Segment-wise path pseudonymization: enabled (default false until the stream restore is confirmed live), replace_unknown (default true), preserve (segments added to the built-in list of ordinary directory names), filenames (terms: a file name is replaced only where a term matches inside it, the default; all: every file name outside the preserve list).",
 				},
 				{
 					Name:        "packyme",
@@ -324,6 +324,7 @@ func (p *privacyFilterPlugin) initPseudonymize() error {
 			ReplaceUnknown: p.cfg.Path.ReplaceUnknown,
 			Preserve:       p.cfg.Path.Preserve,
 			Known:          known,
+			AllFilenames:   p.cfg.Path.Filenames == PathFilenamesAll,
 		})
 		if errPaths != nil {
 			return fmt.Errorf("privacyfilter: path layer: %w", errPaths)

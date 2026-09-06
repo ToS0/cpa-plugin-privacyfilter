@@ -123,6 +123,12 @@ type PathConfig struct {
 	// never replaced (home, usr, etc, var, ...). The built-in list itself is
 	// maintained by the integrator, not here.
 	Preserve []string `yaml:"preserve"`
+	// Filenames decides what happens to the last segment of a path when it
+	// has a file extension. PathFilenamesTerms, the default, leaves it to
+	// the term layer: a file name is replaced only where a term matches
+	// inside it. PathFilenamesAll replaces every file name outside the
+	// preserve list, like a directory.
+	Filenames string `yaml:"filenames"`
 }
 
 // PackymeConfig switches the packyme/privacy-filter detection layer.
@@ -230,6 +236,7 @@ func defaultConfig() privacyFilterConfig {
 		Path: PathConfig{
 			Enabled:        false,
 			ReplaceUnknown: true,
+			Filenames:      PathFilenamesTerms,
 		},
 		Packyme: PackymeConfig{
 			Enabled: true,
@@ -261,6 +268,12 @@ func parseConfig(raw []byte) (privacyFilterConfig, error) {
 	return cfg, nil
 }
 
+// Values of path.filenames.
+const (
+	PathFilenamesTerms = "terms"
+	PathFilenamesAll   = "all"
+)
+
 // validate rejects a configuration parseConfig must not hand to the rest of
 // the plugin. It checks only what config.go itself owns: the two enums, and
 // the shape of a term entry. Everything with a dedicated constructor
@@ -277,6 +290,12 @@ func (cfg *privacyFilterConfig) validate() error {
 	case OnErrorBlock, OnErrorPassthrough:
 	default:
 		return fmt.Errorf("privacyfilter: invalid on_error %q, want %q or %q", cfg.OnError, OnErrorBlock, OnErrorPassthrough)
+	}
+
+	switch cfg.Path.Filenames {
+	case PathFilenamesTerms, PathFilenamesAll:
+	default:
+		return fmt.Errorf("privacyfilter: invalid path.filenames %q, want %q or %q", cfg.Path.Filenames, PathFilenamesTerms, PathFilenamesAll)
 	}
 
 	for i, t := range cfg.Terms {

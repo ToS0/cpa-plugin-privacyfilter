@@ -51,6 +51,9 @@ func TestParseConfig_Defaults(t *testing.T) {
 	if len(cfg.Path.Preserve) != 0 {
 		t.Fatalf("Path.Preserve = %v, want empty", cfg.Path.Preserve)
 	}
+	if cfg.Path.Filenames != PathFilenamesTerms {
+		t.Fatalf("Path.Filenames = %q, want %q", cfg.Path.Filenames, PathFilenamesTerms)
+	}
 
 	if !cfg.Packyme.Enabled {
 		t.Fatal("Packyme.Enabled = false, want true")
@@ -157,6 +160,7 @@ path:
   enabled: false
   replace_unknown: true
   preserve: []
+  filenames: all
 packyme:
   enabled: true
 secrets:
@@ -236,6 +240,11 @@ terms:
   - {value: "athene.lan", regex: "a.*", kind: host}
 `,
 			wantErr: "got both",
+		},
+		{
+			name:    "unknown path.filenames",
+			raw:     "path:\n  filenames: some\n",
+			wantErr: "invalid path.filenames",
 		},
 		{
 			name:    "mapping_ttl does not parse as a duration",
