@@ -61,7 +61,7 @@ func forward(t *testing.T, headers http.Header, body []byte) pipeline {
 	if err != nil {
 		t.Fatalf("NewPaths: %v", err)
 	}
-	det := detect.NewComposite(gen.IsPseudonym, terms, patterns, detect.NewPackyme(f), paths)
+	det := detect.NewComposite(gen.IsPseudonym, terms, patterns, detect.NewPackyme(f, detect.PackymeConfig{IPv4: true, IPv6: true, Email: true}), paths)
 
 	table := mapping.NewTable(gen)
 	out, _, err := payload.Walk(body, payload.WalkOptions{}, func(p payload.Path, text string) (string, bool) {

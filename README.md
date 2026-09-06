@@ -375,7 +375,7 @@ like the original:
 | `salt_secret_path`       | string | `""`           | HMAC secret file. Empty uses `pseudonym.secret` next to the shared library; a relative path resolves from the plugin directory. At least 32 bytes after trimming; the plugin refuses to start without it.                                                                                                                 |
 | `terms`                  | array  | `[]`           | Values to treat as confidential, each `{value: ..., kind: ...}` or `{regex: ..., kind: ...}` with an optional `ignore_case: true`. Takes precedence over every other detection layer.                                                                                                                                       |
 | `terms_file`             | string | `""`           | The term list, see [The term list](#the-term-list). A relative path resolves from the plugin directory.                                                                                                                                                                                                                   |
-| `patterns`               | object | all on but url | Structural detectors: `ipv4`, `ipv6`, `cidr`, `mac`, `email`, `iban`, `uuid`, `hexid`, `fingerprint`, `serial` default to `true`; `url` is off. `uuid` covers disk and machine UUIDs, `hexid` 32-digit and `0x`-prefixed 16-digit hex ids such as a WWN or machine-id, `fingerprint` SSH host-key fingerprints (`SHA256:…`), `serial` a serial number that follows a label such as `Serial Number:`, `ID_SERIAL_SHORT=`, `"serial":`, `iSerial`, `Seriennummer:` or `s/n:`. |
+| `patterns`               | object | all on but url | Structural detectors: `ipv4`, `ipv6`, `cidr`, `mac`, `email`, `iban`, `uuid`, `hexid`, `fingerprint`, `serial` default to `true`; `url` is off. `uuid` covers disk and machine UUIDs, `hexid` 32-digit and `0x`-prefixed 16-digit hex ids such as a WWN or machine-id, `fingerprint` SSH host-key fingerprints (`SHA256:…`), `serial` a serial number that follows a label such as `Serial Number:`, `ID_SERIAL_SHORT=`, `"serial":`, `iSerial`, `Seriennummer:` or `s/n:`. `ipv4`, `ipv6` and `email` also govern what the packyme layer reports, see [Switching detectors off](#switching-detectors-off). |
 | `path`                   | object | disabled       | Segment-wise path pseudonymization, see [Paths and file names](#paths-and-file-names): `enabled` (default `false`), `replace_unknown` (default `true`, every directory outside the preserve list is replaced; `false` replaces only directories that are also terms), `filenames` (`terms`, the default, replaces a file name only where a term matches inside it; `all` replaces every file name outside the preserve list), `preserve` (names added to the built-in list of ordinary segments such as `home`, `usr`, `src`). |
 | `packyme`                | object | enabled        | `enabled` toggles the packyme/privacy-filter layer with the gitleaks rules.                                                                                                                                                                                                                                                |
 | `secrets`                | object | disabled       | `enabled` and `rules_toml` for the betterleaks layer. Only effective in a binary built with the `betterleaks` tag; enabling it in a plain build fails registration.                                                                                                                                                         |
@@ -384,6 +384,33 @@ like the original:
 | `limits.mapping_ttl`     | string | `30m`          | Lifetime of a request's mapping table, measured from the request. Must outlast the longest upstream turnaround.                                                                                                                                                                                                           |
 | `on_error`               | string | `block`        | Forward-path behaviour when detection or parsing fails: `block` terminates the request, `passthrough` forwards it unfiltered. The return path always passes through on error.                                                                                                                                             |
 | `audit`                  | object | off            | Local audit log: `path` (empty keeps it off; a relative path resolves from the plugin directory) and `max_bytes` (default 10 MiB, the file is rotated once to `.1`). Every mapping and every restore is written in clear text, see [Audit log](#audit-log).                                                             |
+
+### Switching detectors off
+
+Every structural detector has its own switch under `patterns`. Someone who works with public addresses all day
+and wants them left alone, or who needs the model to reason about real subnets, switches the network detectors
+off and keeps the rest:
+
+```yaml
+    privacyfilter:
+      mode: pseudonymize
+      patterns:
+        ipv4: false
+        ipv6: false
+        cidr: false
+        mac: false
+```
+
+The switches reach every layer. The original plugin's detection has no switches of its own and reports IP
+addresses and e-mail addresses next to its credential rules; with `ipv4`, `ipv6` or `email` set to `false` its
+findings of that kind are dropped as well, so a value of a switched-off kind is replaced by no layer. The term list
+is the exception: an entry with `kind: ipv4` or `kind: cidr` is replaced whatever the switches say, because you
+put it there. If `machine-ids.py` collected addresses you do not want replaced, strike them from the file.
+
+Switching a layer off as a whole works the same way: `packyme.enabled: false` drops the original detection with
+its credential, phone and bank card rules, `path.enabled: false` leaves directories alone, `secrets.enabled`
+governs betterleaks. Every change needs a proxy restart, and a conversation that was started before the change
+should be started afresh, because its pseudonyms change with the settings.
 
 ## What it does and what it does not do
 

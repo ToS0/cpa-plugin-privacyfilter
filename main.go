@@ -129,7 +129,7 @@ func buildPlugin(configYAML []byte, pluginDir string, rt *runtimeState) (plugina
 				{
 					Name:        "patterns",
 					Type:        pluginapi.ConfigFieldTypeObject,
-					Description: "Toggles for the structural detectors: ipv4, ipv6, cidr, mac, email, iban, url, uuid, hexid (machine-id, WWN), fingerprint (SSH SHA256), serial (labelled serial numbers). All default to true except url.",
+					Description: "Toggles for the structural detectors: ipv4, ipv6, cidr, mac, email, iban, url, uuid, hexid (machine-id, WWN), fingerprint (SSH SHA256), serial (labelled serial numbers). All default to true except url. ipv4, ipv6 and email also govern what the packyme layer reports.",
 				},
 				{
 					Name:        "path",
@@ -311,7 +311,14 @@ func (p *privacyFilterPlugin) initPseudonymize() error {
 	// credential scanner comes last.
 	layers := []detect.Detector{termsLayer, patternsLayer}
 	if p.cfg.Packyme.Enabled {
-		layers = append(layers, detect.NewPackyme(p.filter))
+		// The pattern toggles reach into this layer too: the library has
+		// none of its own, and a user who switches ipv4 off expects no
+		// address to be replaced by any layer.
+		layers = append(layers, detect.NewPackyme(p.filter, detect.PackymeConfig{
+			IPv4:  p.cfg.Patterns.IPv4,
+			IPv6:  p.cfg.Patterns.IPv6,
+			Email: p.cfg.Patterns.Email,
+		}))
 	}
 	if p.cfg.Path.Enabled {
 		known := make(map[string]bool, len(entries))

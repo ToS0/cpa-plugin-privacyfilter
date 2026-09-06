@@ -707,3 +707,38 @@ func TestRedactMode_Unchanged(t *testing.T) {
 		t.Fatalf("expected a pass-through, got %+v", resp)
 	}
 }
+
+// TestPseudonymizeRequest_PatternToggleReachesEveryLayer: with
+// patterns.ipv4 switched off, an IPv4 address survives the forward path
+// even though the packyme layer would report it on its own. The e-mail
+// address in the same text, whose toggle stays on, is still replaced.
+func TestPseudonymizeRequest_PatternToggleReachesEveryLayer(t *testing.T) {
+	addr := strings.Join([]string{"100", "73", "67", "152"}, ".")
+	mail := "sophie" + "@" + "example.org"
+	req := map[string]any{
+		"model":    "claude-fable-5-1",
+		"messages": []any{map[string]any{"role": "user", "content": "Ping " + addr + " and mail " + mail + "."}},
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	p := newPseudoPlugin(t, map[string]any{
+		"patterns": map[string]any{
+			"ipv4": false, "ipv6": true, "cidr": true,
+			"mac": true, "email": true, "iban": true, "url": false,
+		},
+		"packyme": map[string]any{"enabled": true},
+	})
+	resp := beforeAuth(t, p, "req-1", body)
+	if resp.Terminate {
+		t.Fatalf("request terminated: %s", resp.ResponseBody)
+	}
+	out := string(resp.Body)
+	if !strings.Contains(out, addr) {
+		t.Errorf("address should survive with ipv4 off, body: %s", out)
+	}
+	if strings.Contains(out, mail) {
+		t.Errorf("e-mail should be replaced with email on, body: %s", out)
+	}
+}

@@ -247,7 +247,7 @@ plugins:
 | `salt_secret_path`      | string | `""`         | HMAC 密钥文件。为空时使用共享库旁的 `pseudonym.secret`；相对路径基于插件目录解析。去除空白后至少 32 字节，缺失时插件拒绝启动。                                                                     |
 | `terms`                 | array  | `[]`         | 视为敏感的值，每项为 `{value: ..., kind: ...}` 或 `{regex: ..., kind: ...}`，可加 `ignore_case: true`。优先级高于其他所有检测层。                                              |
 | `terms_file`            | string | `""`         | 词条列表，见[词条列表](#词条列表)。相对路径基于插件目录解析。                                                                                                        |
-| `patterns`              | object | 除 url 外全部开启   | 结构化检测器：`ipv4`、`ipv6`、`cidr`、`mac`、`email`、`iban`、`uuid`、`hexid`、`fingerprint`、`serial` 默认 `true`；`url` 关闭。`uuid` 覆盖磁盘和机器 UUID，`hexid` 覆盖 32 位及 `0x` 前缀的 16 位十六进制标识（如 WWN、machine-id），`fingerprint` 覆盖 SSH 主机密钥指纹（`SHA256:…`），`serial` 覆盖跟在 `Serial Number:`、`ID_SERIAL_SHORT=`、`"serial":`、`iSerial`、`Seriennummer:`、`s/n:` 等标签之后的序列号。 |
+| `patterns`              | object | 除 url 外全部开启   | 结构化检测器：`ipv4`、`ipv6`、`cidr`、`mac`、`email`、`iban`、`uuid`、`hexid`、`fingerprint`、`serial` 默认 `true`；`url` 关闭。`uuid` 覆盖磁盘和机器 UUID，`hexid` 覆盖 32 位及 `0x` 前缀的 16 位十六进制标识（如 WWN、machine-id），`fingerprint` 覆盖 SSH 主机密钥指纹（`SHA256:…`），`serial` 覆盖跟在 `Serial Number:`、`ID_SERIAL_SHORT=`、`"serial":`、`iSerial`、`Seriennummer:`、`s/n:` 等标签之后的序列号。`ipv4`、`ipv6`、`email` 同时决定 packyme 层报告什么，见[关闭检测器](#关闭检测器)。 |
 | `path`                  | object | 关闭           | 按路径段假名化，见[路径与文件名](#路径与文件名)：`enabled`（默认 `false`）、`replace_unknown`（默认 `true`，替换保留列表之外的所有目录；`false` 时只替换同时是词条的目录）、`filenames`（默认 `terms`，只在词条匹配处替换文件名；`all` 替换保留列表之外的所有文件名）、`preserve`（在内置常见段名列表如 `home`、`usr`、`src` 之外追加保留的名字）。 |
 | `packyme`               | object | 开启           | `enabled` 控制使用 gitleaks 规则的 packyme/privacy-filter 层。                                                                                             |
 | `secrets`               | object | 关闭           | betterleaks 层的 `enabled` 和 `rules_toml`。只在带 `betterleaks` 标签构建的二进制中有效；在普通构建中开启会导致注册失败。                                                              |
@@ -256,6 +256,24 @@ plugins:
 | `limits.mapping_ttl`    | string | `30m`        | 一个请求的映射表寿命，从请求时刻起算。必须长于上游最长的往返时间。                                                                                                                |
 | `on_error`              | string | `block`      | 检测或解析失败时的正向行为：`block` 终止请求，`passthrough` 原样转发。还原路径出错时总是原样放行。                                                                                     |
 | `audit`                 | object | 关闭           | 本地审计日志：`path`（为空即关闭；相对路径相对插件目录解析）和 `max_bytes`（默认 10 MiB，文件轮转一次到 `.1`）。每条映射和每次还原都以明文写入，见[审计日志](#审计日志)。 |
+
+### 关闭检测器
+
+每个结构化检测器在 `patterns` 下都有自己的开关。整天和公网地址打交道、希望它们保持原样的人，或者需要模型对真实网段做推理的人，可以关掉网络类检测器，保留其余：
+
+```yaml
+    privacyfilter:
+      mode: pseudonymize
+      patterns:
+        ipv4: false
+        ipv6: false
+        cidr: false
+        mac: false
+```
+
+这些开关作用于每一层。原插件的检测没有自己的开关，会在凭据规则之外报告 IP 地址和邮箱；把 `ipv4`、`ipv6` 或 `email` 设为 `false` 后，它报告的同类结果也会被丢弃，所以被关掉的 kind 不会被任何一层替换。词条列表是例外：`kind: ipv4` 或 `kind: cidr` 的条目不管开关如何都会被替换，因为是你放进去的。如果 `machine-ids.py` 收集了你不想替换的地址，从文件里划掉它们。
+
+整层关闭的方式相同：`packyme.enabled: false` 去掉原有检测及其凭据、电话和银行卡规则，`path.enabled: false` 不再动目录，`secrets.enabled` 控制 betterleaks。每次修改都需要重启代理，修改前开始的会话应当重新开始，因为它的假名会随设置改变。
 
 ## 它做什么，不做什么
 

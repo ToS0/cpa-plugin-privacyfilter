@@ -6,20 +6,35 @@ import (
 	"privacyfilter/filter"
 )
 
+// PackymeConfig says which of the library's own findings are kept. The
+// library has no switches per kind: it always reports IP addresses and
+// e-mail addresses next to the credential rules. The toggles of the
+// structural patterns are therefore applied to its findings here, so that
+// switching ipv4 off means no IPv4 address is replaced by any layer. Hits of
+// KindSecret, the credential rules, phone and identity numbers and bank
+// cards, are always kept; they are switched off as a whole with the layer.
+type PackymeConfig struct {
+	IPv4  bool
+	IPv6  bool
+	Email bool
+}
+
 // NewPackyme wraps the existing detection library as one layer. It calls
 // Redact and uses only the Entities of the result: Start and End become the
 // span, Text becomes Value, and Type is translated with KindFromPackyme. The
-// field Redacted is ignored.
+// field Redacted is ignored. Findings of a kind that cfg switches off are
+// dropped.
 //
 // The wrapped filter must be the same instance the redact mode uses, so both
 // modes see identical hits.
-func NewPackyme(f *filter.Filter) Detector {
-	return &packymeDetector{filter: f}
+func NewPackyme(f *filter.Filter, cfg PackymeConfig) Detector {
+	return &packymeDetector{filter: f, cfg: cfg}
 }
 
 // packymeDetector adapts packyme/privacy-filter to the Detector interface.
 type packymeDetector struct {
 	filter *filter.Filter
+	cfg    PackymeConfig
 }
 
 var _ Detector = (*packymeDetector)(nil)
@@ -51,9 +66,26 @@ func (p *packymeDetector) Scan(text string) []Match {
 		if kind == KindIPv4 && strings.Contains(value, ":") {
 			kind = KindIPv6
 		}
+		if !p.keeps(kind) {
+			continue
+		}
 		hits = append(hits, Match{Start: e.Start, End: e.End, Value: value, Kind: kind, Source: "packyme"})
 	}
 	return Merge(hits)
+}
+
+// keeps applies the kind toggles of PackymeConfig. Every kind the config
+// does not name is kept.
+func (p *packymeDetector) keeps(kind Kind) bool {
+	switch kind {
+	case KindIPv4:
+		return p.cfg.IPv4
+	case KindIPv6:
+		return p.cfg.IPv6
+	case KindEmail:
+		return p.cfg.Email
+	}
+	return true
 }
 
 // Labels packyme/privacy-filter writes into Entity.Type (filter/pii.go).
