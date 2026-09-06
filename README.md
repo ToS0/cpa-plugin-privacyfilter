@@ -229,10 +229,7 @@ The block of a machine sits between two marker comments that carry its host name
 The model does see that the values are pseudonyms: `.invalid` is a reserved top-level domain, `100.64.0.0/10` is the carrier-grade NAT range, a UUID with version nibble `f` exists in no RFC. Left to itself it comments on that, asks whether the host name is a placeholder, drops the `.invalid`, or "corrects" the value. Tell it once, in the project's `CLAUDE.md` or in the system prompt, and it stops:
 
 ```markdown
-Host names like `h-<hex>`, domains like `d-<hex>.invalid`, addresses in `100.64.0.0/10`, MACs starting with
-`02:` and similar tokens in this session are pseudonyms that a proxy swaps back to the real values before I see
-the answer. Treat them as the real names: use them verbatim, never shorten or "fix" them, never drop the
-`.invalid`, never invent new ones in the same shape, and do not comment on their form.
+Host names like `h-<hex>`, domains like `d-<hex>.invalid`, addresses in `100.64.0.0/10`, MACs starting with `02:` and similar tokens in this session are pseudonyms that a proxy swaps back to the real values before I see the answer. Treat them as the real names: use them verbatim, never shorten or "fix" them, never drop the `.invalid`, never invent new ones in the same shape, and do not comment on their form.
 ```
 
 ## Checklist
