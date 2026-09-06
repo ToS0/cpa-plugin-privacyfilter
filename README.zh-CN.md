@@ -6,6 +6,47 @@
 
 插件有两种模式。`redact` 是默认值，也就是原版插件：检测到的密钥、联系方式和证件号码变成 `[REDACTED]`，单向。`pseudonymize` 是本分支存在的理由：你列表里的值，加上检测器找到的一切，都变成同形状的稳定假名，回答被翻译回来，流式与否都一样。两种模式在检测上并不互斥。假名模式把原版插件的自动检测作为最后一层运行，排在你的列表和结构模式之后，因此 `redact` 能找到的东西这里也都能找到。区别在于命中之后怎么办：扔掉，还是换成模型能用、客户端拿回原值的东西。本文档面向 `pseudonymize`；`redact` 见[脱敏模式](#脱敏模式)。
 
+## 一眼看懂
+
+一个请求，四个站点。客户端发送真实值，插件把它们换成同形状的假名，模型用它看到的假名作答，插件在客户端读到回答之前把原值放回去。映射关系从不离开本机。
+
+```mermaid
+flowchart LR
+    C["你的客户端"] -- "1 原始值" --> P["代理上的插件"]
+    P -- "2 假名" --> M["模型提供商"]
+    M -- "3 带假名的回答" --> P
+    P -- "4 放回原值" --> C
+```
+
+| 站点 | 文本 |
+|---|---|
+| 客户端发送的 | Ingrid Muster reports that helios-nas01 (10.20.30.7) does not answer since the last change to /home/imuster/projekte/muster-gmbh/deploy.sh. |
+| 模型收到的 | Lea Schuricht reports that h-5aa7c84ea894 (100.67.154.131) does not answer since the last change to /home/d-d828a9564f55/d-11d2d4de326e/d-69bb4ff312ad/deploy.sh. |
+| 模型回答的 | h-5aa7c84ea894 is reachable at 100.67.154.131 again. The change in /home/d-d828a9564f55/d-11d2d4de326e/d-69bb4ff312ad/deploy.sh reverted the route, I told Lea Schuricht. |
+| 客户端得到的 | helios-nas01 is reachable at 10.20.30.7 again. The change in /home/imuster/projekte/muster-gmbh/deploy.sh reverted the route, I told Ingrid Muster. |
+
+每一类值都有自己形状的假名，所以模型仍能分清主机和地址、路径和序列号。左列是离开你编辑器的内容，右列是提供商存下的内容。下面的值都是虚构的；假名由插件在一次测试运行中生成：
+
+| kind | 你发送的 | 模型看到的 |
+|---|---|---|
+| `host` | `helios-nas01` | `h-5aa7c84ea894` |
+| `domain` | `muster-gmbh.de` | `d-27133c5f173b.invalid` |
+| `person` | `Ingrid Muster` | `Lea Schuricht` |
+| `email` | `ingrid.muster@muster-gmbh.de` | `ingrid.muster@d-27133c5f173b.invalid` |
+| `cidr` | `10.20.0.0/16` | `100.67.0.0/16` |
+| `ipv4` | `10.20.30.7` | `100.67.154.131` |
+| `ipv6` | `2a01:4f8:1c17:6f3::2` | `fdff:5046:5346:7dbe:ca22:4379:1d53:1cb` |
+| `mac` | `3c:97:0e:4b:12:aa` | `02:c2:6d:ef:67:18` |
+| `iban` | `DE89370400440532013000` | `DE54000007939311999813` |
+| `uuid` | `6f1c2a3e-9b4d-4e0f-8a7b-1c2d3e4f5a6b` | `7f1831a6-ee87-f63c-d5d3-d1fae42c754e` |
+| `hexid` | `9e3f4a1b8c2d4e5f6a7b8c9d0e1f2a3b` | `504655b52880c8edb9f6934fa6b8610c` |
+| `fingerprint` | `SHA256:Qz7vL2pXk9aRtY4mN8wS1bC3dF5gH6jK0lZ2xV4uB7e` | `SHA256:PFUmI8bPkOxwMjsrOW8GfFbhNfWfgwkT79IkC2OaggL` |
+| `serial` | `Serial Number: C02ZK3XYLVDL` | `Serial Number: PF-LTDIE7M2VT1R` |
+| `path_segment` | `/home/imuster/projekte/muster-gmbh/deploy.sh` | `/home/d-d828a9564f55/d-11d2d4de326e/d-69bb4ff312ad/deploy.sh` |
+| `secret` | `ghp_Q7v2Kd9Lm4Xs8Wb1Zc6Nf3Hj5Rt0Yp2Gu7Ea` | `PF_76877c8a06b5` |
+
+同一个值在整个会话里得到同一个假名，所以模型能提到三条消息之前看到的主机。另一个会话得到另一套假名。有哪些 kind、各自用于什么，见 [kind](#kind)。
+
 ## 为什么
 
 编程助手发给模型的一切最终都落在别人的服务器上：提示词、它读取的文件、它运行的每条命令的输出。对顾问、管理员或小公司来说，那就是整个工作日的明文：客户名称、背后的人、他们的邮箱、主机名和网络地址、项目所在的路径、机器序列号、磁盘和分区标识、SSH 指纹、账号。提供商的一次泄露、一张传票、一次训练数据的失误或一张仪表盘截图，暴露的就不是某一个秘密，而是谁与谁在什么项目上用哪些机器协作的全图。这张图对攻击者的价值超过任何一个密码。
@@ -403,6 +444,11 @@ BUILD_TAGS=betterleaks make build
 ```bash
 go test ./...
 go test -tags betterleaks ./...
+
+# 修改渲染器或示例值之后：重新生成 README 的“一眼看懂”一节
+README_EXAMPLES_OUT=/tmp/examples.tsv go test -run TestRoundTrip_ReadmeExamples .
+tools/readme-examples.py /tmp/examples.tsv en   # 覆盖 README.md 中的该节
+tools/readme-examples.py /tmp/examples.tsv zh   # 以及 README.zh-CN.md 中的
 make build
 make clean
 ```
@@ -423,6 +469,7 @@ pseudo/                 HMAC 假名、按 kind 的渲染器、salt 与密钥处�
 mapping/                请求级映射表与还原器
 payload/                JSON 遍历、拒绝列表、Anthropic SSE 事件
 tools/machine-ids.py    把本机标识收集为词条文件；构建时复制到 dist/
+tools/readme-examples.py 用 TestRoundTrip_ReadmeExamples 的输出生成“一眼看懂”一节
 cmd/termsgen/           旧的生成器：从 ssh 配置和 hosts 生成词条文件
 internal/leaktest/      端到端泄露测试：没有敏感值能通过正向路径
 rules/gitleaks.toml     内置检测规则

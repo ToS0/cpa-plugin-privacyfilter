@@ -18,6 +18,47 @@ found here too. The difference is what happens to a hit: thrown away, or replace
 and the client gets back as the original. This document is written for `pseudonymize`; `redact` is described under
 [Redact mode](#redact-mode).
 
+## At a glance
+
+One request, four stations. The client sends the real values, the plugin swaps them for pseudonyms of the same shape, the model answers with the pseudonyms it saw, and the plugin puts the originals back before the client reads the answer. The mapping never leaves the machine.
+
+```mermaid
+flowchart LR
+    C["Your client"] -- "1 original values" --> P["Plugin on the proxy"]
+    P -- "2 pseudonyms" --> M["Model provider"]
+    M -- "3 answer with pseudonyms" --> P
+    P -- "4 originals put back" --> C
+```
+
+| Station | Text |
+|---|---|
+| What the client sends | Ingrid Muster reports that helios-nas01 (10.20.30.7) does not answer since the last change to /home/imuster/projekte/muster-gmbh/deploy.sh. |
+| What the model receives | Lea Schuricht reports that h-5aa7c84ea894 (100.67.154.131) does not answer since the last change to /home/d-d828a9564f55/d-11d2d4de326e/d-69bb4ff312ad/deploy.sh. |
+| What the model answers | h-5aa7c84ea894 is reachable at 100.67.154.131 again. The change in /home/d-d828a9564f55/d-11d2d4de326e/d-69bb4ff312ad/deploy.sh reverted the route, I told Lea Schuricht. |
+| What the client gets | helios-nas01 is reachable at 10.20.30.7 again. The change in /home/imuster/projekte/muster-gmbh/deploy.sh reverted the route, I told Ingrid Muster. |
+
+Every kind of value gets a pseudonym of its own shape, so the model can still tell a host from an address and a path from a serial number. The left column is what leaves your editor, the right column is what the provider stores. Every value below is invented; the pseudonyms were produced by the plugin in a test run:
+
+| Kind | What you send | What the model sees |
+|---|---|---|
+| `host` | `helios-nas01` | `h-5aa7c84ea894` |
+| `domain` | `muster-gmbh.de` | `d-27133c5f173b.invalid` |
+| `person` | `Ingrid Muster` | `Lea Schuricht` |
+| `email` | `ingrid.muster@muster-gmbh.de` | `ingrid.muster@d-27133c5f173b.invalid` |
+| `cidr` | `10.20.0.0/16` | `100.67.0.0/16` |
+| `ipv4` | `10.20.30.7` | `100.67.154.131` |
+| `ipv6` | `2a01:4f8:1c17:6f3::2` | `fdff:5046:5346:7dbe:ca22:4379:1d53:1cb` |
+| `mac` | `3c:97:0e:4b:12:aa` | `02:c2:6d:ef:67:18` |
+| `iban` | `DE89370400440532013000` | `DE54000007939311999813` |
+| `uuid` | `6f1c2a3e-9b4d-4e0f-8a7b-1c2d3e4f5a6b` | `7f1831a6-ee87-f63c-d5d3-d1fae42c754e` |
+| `hexid` | `9e3f4a1b8c2d4e5f6a7b8c9d0e1f2a3b` | `504655b52880c8edb9f6934fa6b8610c` |
+| `fingerprint` | `SHA256:Qz7vL2pXk9aRtY4mN8wS1bC3dF5gH6jK0lZ2xV4uB7e` | `SHA256:PFUmI8bPkOxwMjsrOW8GfFbhNfWfgwkT79IkC2OaggL` |
+| `serial` | `Serial Number: C02ZK3XYLVDL` | `Serial Number: PF-LTDIE7M2VT1R` |
+| `path_segment` | `/home/imuster/projekte/muster-gmbh/deploy.sh` | `/home/d-d828a9564f55/d-11d2d4de326e/d-69bb4ff312ad/deploy.sh` |
+| `secret` | `ghp_Q7v2Kd9Lm4Xs8Wb1Zc6Nf3Hj5Rt0Yp2Gu7Ea` | `PF_76877c8a06b5` |
+
+The same value gets the same pseudonym for the whole conversation, so the model can refer to a host it saw three messages ago. Another conversation gets other pseudonyms. Which kinds exist and what each one is for is described under [Kinds](#kinds).
+
 ## Why
 
 Everything a coding assistant sends to a model ends up on somebody else's server: the prompt, the files it reads,
@@ -615,6 +656,11 @@ rules. A rules file that does not compile fails registration instead of taking t
 ```bash
 go test ./...
 go test -tags betterleaks ./...
+
+# After a change to the renderers or the example values: regenerate the README section "At a glance"
+README_EXAMPLES_OUT=/tmp/examples.tsv go test -run TestRoundTrip_ReadmeExamples .
+tools/readme-examples.py /tmp/examples.tsv en   # paste over the section in README.md
+tools/readme-examples.py /tmp/examples.tsv zh   # and in README.zh-CN.md
 make build
 make clean
 ```
@@ -635,6 +681,7 @@ pseudo/                 HMAC pseudonyms, renderers per kind, salt and secret han
 mapping/                Request-scoped mapping tables and the restorer
 payload/                JSON walking, deny list, Anthropic SSE events
 tools/machine-ids.py    Collects this machine's identifiers as a term file; copied to dist/ by the build
+tools/readme-examples.py Renders the section "At a glance" from the output of TestRoundTrip_ReadmeExamples
 cmd/termsgen/           Older generator: a term file from ssh config and hosts
 internal/leaktest/      End-to-end leak test: nothing confidential survives the forward path
 rules/gitleaks.toml     Built-in detection rules
