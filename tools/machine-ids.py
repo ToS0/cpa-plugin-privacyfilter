@@ -63,6 +63,19 @@ DMI_PLACEHOLDERS = {"", "none", "default string", "to be filled by o.e.m.",
 GENERIC_LABELS = {"efi", "esp", "boot", "root", "swap", "home", "system",
                   "recovery", "winre", "reserved", "data", "var", "tmp", "usr"}
 
+# Shell builtins and keywords, which shutil.which does not see, plus a few
+# words every shell session contains. A host of this name turns the word into
+# a pseudonym wherever it appears.
+SHELL_WORDS = {"cd", "time", "test", "echo", "set", "read", "type", "exit", "kill", "wait", "jobs",
+               "alias", "export", "source", "eval", "exec", "trap", "shift", "true", "false", "pwd",
+               "let", "local", "return", "break", "continue", "hash", "help", "history", "dirs",
+               "pushd", "popd", "ulimit", "umask", "unset", "printf", "command", "builtin", "declare",
+               "readonly", "select", "times", "caller", "shopt", "disown", "bind", "logout", "fg", "bg",
+               "if", "then", "else", "fi", "for", "do", "done", "while", "until", "case", "esac", "in",
+               "function", "sudo", "root", "home", "tmp", "log", "logs", "bin", "lib", "etc", "opt",
+               "var", "usr", "dev", "proc", "sys", "run", "mnt", "media", "boot", "config", "data",
+               "main", "master", "dev", "prod", "stage", "live", "new", "old", "temp", "cache"}
+
 # Account names that are ordinary words; a person term for them would replace
 # the word in every prompt.
 GENERIC_ACCOUNTS = {"admin", "administrator", "user", "ubuntu", "debian", "fedora", "pi",
@@ -128,7 +141,7 @@ class Terms:
         pattern = r"(?i)\b" + re.escape(name).replace("\\-", "-") + r"(?:\.[a-z0-9-]+)*\b"
         self.lines.append('{regex: "%s", kind: host}' % pattern.replace("\\", "\\\\"))
         self.counts["host"] += 1
-        if name in GENERIC_ACCOUNTS or name in GENERIC_LABELS or shutil.which(name):
+        if name in GENERIC_ACCOUNTS or name in GENERIC_LABELS or name in SHELL_WORDS or shutil.which(name):
             # The term stays, the machine is real; but every occurrence of
             # the word will be replaced, in commands and prose alike.
             self.note("host %s is also a command or an ordinary word: every '%s' in any text will be "
