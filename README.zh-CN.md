@@ -2,133 +2,317 @@
 
 [English](README.md) | 简体中文
 
-CLIProxyAPI 的隐私过滤插件，用于在请求发送给模型前自动识别并脱敏敏感信息。
+[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) 的隐私过滤插件。它位于编程助手与模型提供商之间，在请求离开你的机器之前把主机名、IP 地址、邮箱、人名和客户名、路径、序列号、账号之类的标识替换为透明的替身，再把真实值放回回答里。模型把替身当作真实的东西来用，管理系统、改配置、写工具调用，却始终不知道实际的名称和 ID。
 
-学 AI 就上 L 站：[linux.do](https://linux.do/)。
+插件有两种模式。`redact` 是默认值，也就是原版插件：检测到的密钥、联系方式和证件号码变成 `[REDACTED]`，单向。`pseudonymize` 是本分支存在的理由：你列表里的值，加上检测器找到的一切，都变成同形状的稳定假名，回答被翻译回来，流式与否都一样。两种模式在检测上并不互斥。假名模式把原版插件的自动检测作为最后一层运行，排在你的列表和结构模式之后，因此 `redact` 能找到的东西这里也都能找到。区别在于命中之后怎么办：扔掉，还是换成模型能用、客户端拿回原值的东西。本文档面向 `pseudonymize`；`redact` 见[脱敏模式](#脱敏模式)。
 
-本项目基于 [packyme/privacy-filter](https://github.com/packyme/privacy-filter)
-实现核心过滤能力，并适配 [router-for-me/CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) 的 CPA 插件 ABI。
+## 为什么
 
-## 作用
+编程助手发给模型的一切最终都落在别人的服务器上：提示词、它读取的文件、它运行的每条命令的输出。对顾问、管理员或小公司来说，那就是整个工作日的明文：客户名称、背后的人、他们的邮箱、主机名和网络地址、项目所在的路径、机器序列号、磁盘和分区标识、SSH 指纹、账号。提供商的一次泄露、一张传票、一次训练数据的失误或一张仪表盘截图，暴露的就不是某一个秘密，而是谁与谁在什么项目上用哪些机器协作的全图。这张图对攻击者的价值超过任何一个密码。
 
-当 CLIProxyAPI 收到请求时，插件会在请求离开本地进程前扫描支持的文本字段。如果检测到敏感内容，请求体会被改写为脱敏后的内容。
+只做脱敏是不够的，因为读到 `[REDACTED]` 的模型无法再推理主机、路径或网络，它写回的工具调用也没法用。假名模式在让提供商尽量少持有信息的同时保持请求可用：每个敏感值在请求离开本机前被替换为同形状的稳定假名，原值在客户端看到回答之前被放回。模型对待 `h-e2ba…` 和 `100.71.4.18` 与对待真实名称完全一样，提供商只存储假名，映射永远不离开本地进程。
 
-典型场景：
+被替换的内容来自三个来源。**词条列表**是一个纯文本文件，装着你自己的值：客户名称、主机、域名、人名、网段、账号。**结构模式**不需要列表，靠自身形状就能识别：IP 地址、MAC、邮箱地址、UUID、SSH 指纹、带标签的序列号、IBAN。**原版插件的检测**最后运行，带着它识别 API Key、令牌和连接串的 Gitleaks 规则，以及电话、证件号码和银行卡的识别器，抓住前两者都没列出的东西。与插件一起分发的脚本 `machine-ids.py` 把一台机器的标识填进词条列表，新主机一分钟内即可覆盖。
 
-- 防止 API Key 和 Token 意外泄露
-- 在提示词发送给模型前移除个人联系方式
-- 对 LLM 请求流量应用 Gitleaks 风格的密钥检测
-- 将过滤逻辑保留在 CLIProxyAPI 插件链路内
+## 安装
 
-## 功能
+你需要一个运行中的 CLIProxyAPI、发布包或构建后 `dist/` 里的两个文件（见[从源码构建](#从源码构建)），以及运行辅助脚本的 Python 3。
 
-- CLIProxyAPI 插件运行时的请求拦截器
-- 脱敏邮箱、手机号、密钥、连接串、证书等敏感内容
-- 使用内置 Gitleaks 规则 `rules/gitleaks.toml`
-- 支持自定义 Gitleaks 规则文件
-- 支持 OpenAI 风格的 `messages` 和 `input` 请求体
-- 可按模型名或来源格式跳过过滤
-- 可构建为 Linux、macOS、Windows 原生共享库
+1. 把共享库和脚本放进 CLIProxyAPI 的插件目录。这是 `config.yaml` 里 `plugins.dir` 指定的目录，通常是 `plugins/`：
 
-## 环境要求
+   ```text
+   plugins/
+   ├── privacyfilter.so        # 插件
+   ├── machine-ids.py          # 填写词条列表，见下文
+   ├── pseudonym.secret        # 第 2 步创建一次
+   └── terms.txt               # 你的词条列表，第 3 步
+   ```
 
-- Go 1.26+
-- 启用 CGO
-- 已安装 `make`
+2. 创建密钥。假名由它派生；没有它插件拒绝启动。任意随机字节，至少 32 个：
 
-## 构建
+   ```bash
+   head -c 48 /dev/urandom | base64 > plugins/pseudonym.secret
+   chmod 600 plugins/pseudonym.secret
+   ```
 
-克隆并构建插件：
+3. 创建词条列表。最快的办法是脚本，它会询问要做什么并写出文件；在运行代理的那台机器上用 `sudo` 运行，以便读取硬件序列号：
+
+   ```bash
+   sudo python3 plugins/machine-ids.py
+   ```
+
+   或者从空文件开始手工填写，见[词条列表](#词条列表)。
+
+4. 在 `config.yaml` 中启用插件。普通安装只需要这些：
+
+   ```yaml
+   plugins:
+     enabled: true
+     dir: "plugins"
+     configs:
+       privacyfilter:
+         enabled: true
+         mode: pseudonymize
+         terms_file: terms.txt      # 相对插件目录
+   ```
+
+5. 重启代理，在日志中找到插件：
+
+   ```text
+   pluginhost: plugin loaded plugin_id=privacyfilter version=... path=plugins/privacyfilter.so
+   ```
+
+   从此每个请求记录一行，按 kind 和数量说明替换了什么，从不记录值本身：
+
+   ```text
+   privacyfilter: request pseudonymized ... replacements="host=33 ipv4=1 email=12 path_segment=247 ..."
+   ```
+
+插件只在启动时读取密钥和词条列表。每次修改 `terms.txt` 后重启代理。
+
+## 词条列表
+
+词条列表是 `terms_file` 指定的文件，在上面的布局中是 `plugins/terms.txt`。它是你唯一需要维护的文件。每一行是一个不得以明文离开本机的值，加上它是哪一类东西，插件据此渲染同形状的假名。
+
+### 格式
+
+```text
+# 井号之后是注释。空行跳过。
+
+nuc                                  # 字面值；没有 kind 时视为主机名
+nuc host                             # 同上，写明 kind
+example-gmbh.de domain               # 域名
+markus person ignore_case            # 人名；ignore_case 同时匹配 "Markus" 和 "MARKUS"
+100.113.172.0/24 cidr                 # 网段；其中的地址保留结构
+DE02000079396869187879 iban          # 账号
+kunde-x path_segment                 # 不得出现在路径里的目录名
+{regex: "(?i)\\bnuc(?:\\.[a-z0-9-]+)*\\b", kind: host}   # 正则表达式，YAML 形式
+{value: "Müller & Söhne", kind: person}                   # 含空格的字面值，YAML 形式
+```
+
+普通行按空白切分：第一个词是值，可选的第二个词是 kind，`ignore_case` 一词设置该标志。含空格或以 `{`、`#` 开头的值用 YAML 形式，键与 `config.yaml` 中 `terms` 条目相同：`value` 或 `regex`、`kind`、`ignore_case`。
+
+字面值只在词边界匹配：`nuc` 匹配 `nuc`、`nuc.local`、`nuc_old` 和 `NUC-2`，但不匹配 `nucleus`。字母和数字连成一个词，其他一切包括下划线都是边界。正则表达式在任何匹配处都生效，因此边界要自己用 `\b` 写出来，不要用 `^` 和 `$`：表达式针对整条消息运行，不是针对单行。
+
+### kind
+
+kind 决定假名长什么样。模型看到的东西与原值形状相同，所以能正常工作；回答返回时插件也能分辨假名和真实值。
+
+| kind           | 用于                                       | 假名                                   |
+|----------------|--------------------------------------------|----------------------------------------|
+| `host`         | 主机名，带不带域名都行                     | `h-<12 位十六进制>`                    |
+| `domain`       | 域名、DNS 搜索域                           | `d-<12 位十六进制>.invalid`            |
+| `ipv4`         | 单个 IPv4 地址                             | `100.64.0.0/10` 内的地址               |
+| `ipv6`         | 单个 IPv6 地址                             | `fd00::/8` 内一个固定 `/48` 中的地址 |
+| `cidr`         | 网段；其中的地址保留所属网络               | 同前缀长度，落在同一范围内             |
+| `mac`          | MAC 地址、BSSID                            | `02:xx:xx:xx:xx:xx`                    |
+| `email`        | 邮箱地址                                   | `u-<12 位十六进制>@d-<12 位十六进制>.invalid` |
+| `person`       | 人名；客户如果是人也算                     | 固定列表中的虚构人名；单个词只映射为名 |
+| `iban`         | 账号                                       | 同国家同长度，校验位有效               |
+| `uuid`         | 磁盘、分区、机器和产品 UUID                | 版本位为 `f` 的 UUID                   |
+| `hexid`        | 32 位或 `0x` 前缀 16 位十六进制标识：WWN、machine-id | 同形式，以 `5046` 或 `0x5046` 开头 |
+| `fingerprint`  | SSH 密钥指纹                               | `SHA256:PF` + 41 个字母数字            |
+| `serial`       | 序列号                                     | `PF-<12 位大写字母数字>`               |
+| `path_segment` | 目录名，在路径内替换                       | `d-<12 位十六进制>`                    |
+| `filename`     | 文件名；扩展名保留                         | `f-<12 位十六进制><扩展名>`            |
+| `secret`       | 其他一切                                   | `PF_<12 位十六进制>`                   |
+
+同一个值在整个会话内得到同一个假名，另一个会话得到另一套假名。假名由密钥派生，不存储在任何地方。
+
+### 什么该进列表，什么不该
+
+- **名字，不是单词。** 词条在任何以单词形式出现的地方都会被替换。名为 `backup` 的主机让 `rsync --backup` 在模型眼里变成乱码，名为 `admin` 的用户会破坏配置文件里的每一个 `admin`。这类条目不要写，或者用只匹配你所指形式的正则，比如主机名后接域名。
+- **模式已经能抓到的可以不写。** IP 地址、MAC、邮箱、UUID、指纹和带标签的序列号会被自动检测，原版插件的自动检测连同它的 Gitleaks 规则还会抓到 API Key、令牌、连接串、电话和证件号码以及银行卡号。当模型需要看到它们的结构时才放进列表：把你的网段作为 `cidr` 词条，主机、网关和邻居在模型眼里就留在同一个网络里。
+- **永远不被替换的地址。** 回环、未指定、广播、组播、链路本地和文档网段保持原样，模型仍能看出 `bind` 到回环是怎么回事。`100.64.0.0/10` 内的真实地址和固定 ULA `/48` 内的地址不能作词条，因为假名就住在那里；插件遇到这样的词条会拒绝启动。
+- **一个文件，多台机器。** 每台机器可以加入自己的块，见下一章。插件启动时丢弃完全重复的条目，出现在三个块里的网关只是一个词条。
+- **文件是明文。** 它装的正是插件要挡在线路之外的那些值。让它和它的备份只对代理的用户可读，永远不要把它粘贴进经过代理的会话。
+
+`config.yaml` 中的 `terms` 接受同样的 YAML 形式条目，适合少数几个值；文件才是你维护的列表。
+
+## 用 machine-ids.py 填写列表
+
+`machine-ids.py` 收集它所运行机器的标识，按上面的格式写出。它只需要 Python 3，只读本地来源，没有任何数据离开本机。在终端上不带参数启动时会询问要做什么：
+
+```text
+$ sudo python3 plugins/machine-ids.py
+machine-ids: collects the identifiers of this machine as a term list for the privacyfilter plugin.
+Include the other machines of the LAN (mDNS, reverse DNS of the neighbour table)? [y/N]
+Include container and VM interfaces (veth, docker, virbr)? [y/N]
+Merge into /opt/cliproxyapi/plugins/terms.txt (a backup is written first)? [Y/n]
+… host names
+… machine-id, boot id, DMI
+… network interfaces, DNS, Wi-Fi, Bluetooth
+… block devices, USB, battery
+… SSH and GPG keys
+… user accounts
+… done: 93 terms
+```
+
+它收集：主机名和 mDNS 名，写成同时匹配任意域名后缀的正则；`/etc/hosts` 的条目；machine-id 和 boot id；DMI 产品 UUID 以及主板、机箱和产品的序列号（需要 root）；每个网络接口的 MAC、永久 MAC、IPv4、IPv6、网段和网关；DNS 服务器和搜索域；Wi-Fi SSID 和 BSSID；蓝牙适配器；块设备的 UUID、PARTUUID、PTUUID、序列号、WWN 和标签；USB 设备序列号；电池序列号；SSH 主机密钥和用户自己的公钥，作为指纹和密钥材料；GPG 密钥指纹；ZeroTier 节点 id；本地用户账户。`admin`、`root` 之类的通用账户名会被留在外面并附注，因为它们是单词。已经具有假名形状的值会作为注释写出并说明原因。
+
+供脚本使用以及合并前查看的选项：
+
+| 选项               | 作用                                                                   |
+|--------------------|------------------------------------------------------------------------|
+| `--stdout`         | 打印列表，不问任何问题                                                 |
+| `-o FILE`          | 把列表写入文件，权限 0600                                              |
+| `--summary`        | 只打印每种 kind 的数量，从不打印值                                     |
+| `--merge TERMS`    | 在已有的词条文件中替换或追加本机的块，先做编号备份                     |
+| `--lan`            | 加入局域网中的其他机器：avahi 的 mDNS 名、邻居表的反向 DNS             |
+| `--all-interfaces` | 包含容器和虚拟机接口（veth、docker、virbr 等）                         |
+
+一台机器的块位于两条带主机名的标记注释之间。在同一台机器上再次运行脚本会替换该块，不动其他机器的块，因此代理的词条文件可以容纳你工作的每一台机器：在每台机器上用 `-o` 运行脚本，用 `scp` 把输出复制到代理，在那里合并。要复制，不要粘贴进会话。然后重启代理。
+
+## 告诉模型
+
+模型看得出这些值是假名：`.invalid` 是保留顶级域，`100.64.0.0/10` 是运营商级 NAT 网段，版本位为 `f` 的 UUID 不存在于任何 RFC。放任不管的话，它会对此评论、问主机名是不是占位符、去掉 `.invalid`，或者"修正"这个值。在项目的 `CLAUDE.md` 或系统提示里说明一次，它就不再这样做：
+
+```markdown
+本会话中形如 `h-<hex>` 的主机名、`d-<hex>.invalid` 的域名、`100.64.0.0/10` 内的地址、以 `02:` 开头的 MAC 及类似令牌都是假名，代理会在我看到回答之前把它们换回真实值。请把它们当作真实名称：原样使用，不要缩短或"修正"，不要去掉 `.invalid`，不要按同样形状编造新的，也不要评论它们的形式。
+```
+
+## 配置
+
+插件在 CLIProxyAPI 的 `config.yaml` 中 `plugins.configs.privacyfilter` 下配置。宿主处理 `enabled` 和 `priority`，其余全部透传给插件。完整示例：
+
+```yaml
+plugins:
+  enabled: true
+  dir: "plugins"
+  configs:
+    privacyfilter:
+      enabled: true
+      mode: pseudonymize
+      terms_file: terms.txt          # 相对插件目录
+      terms:                         # 再加几个，内联
+        - {value: example-gmbh.de, kind: domain}
+        - {regex: "[a-z0-9-]+\\.home\\.lan", kind: host}
+        - {value: markus, kind: person, ignore_case: true}
+      path:
+        enabled: false               # 在你的环境中确认流式还原正常后再开启
+      limits:
+        mapping_ttl: 30m
+      skip_models: []
+      skip_formats: []
+```
+
+两种模式都读取的字段：
+
+| 字段              | 类型     | 默认值    | 说明                                                                                   |
+|-----------------|--------|--------|--------------------------------------------------------------------------------------|
+| `mode`          | string | `redact` | `redact` 保持原有的单向脱敏；`pseudonymize` 启用可逆假名和还原路径。两种模式都运行原版检测。 |
+| `gitleaks_toml` | string | `""`   | 自定义 gitleaks 规则文件路径，相对路径基于插件目录解析。为空时使用共享库旁的 `rules/gitleaks.toml`，否则使用构建时内嵌的规则。 |
+| `skip_models`   | array  | `[]`   | 绕过插件的模型                                                                              |
+| `skip_formats`  | array  | `[]`   | 绕过插件的来源格式                                                                            |
+
+只在 `pseudonymize` 模式下读取的字段。`mode: redact` 会忽略它们，插件行为与原版逐字节一致：
+
+| 字段                      | 类型     | 默认值          | 说明                                                                                                                                               |
+|-------------------------|--------|--------------|--------------------------------------------------------------------------------------------------------------------------------------------------|
+| `salt_secret_path`      | string | `""`         | HMAC 密钥文件。为空时使用共享库旁的 `pseudonym.secret`；相对路径基于插件目录解析。去除空白后至少 32 字节，缺失时插件拒绝启动。                                                                     |
+| `terms`                 | array  | `[]`         | 视为敏感的值，每项为 `{value: ..., kind: ...}` 或 `{regex: ..., kind: ...}`，可加 `ignore_case: true`。优先级高于其他所有检测层。                                              |
+| `terms_file`            | string | `""`         | 词条列表，见[词条列表](#词条列表)。相对路径基于插件目录解析。                                                                                                        |
+| `patterns`              | object | 除 url 外全部开启   | 结构化检测器：`ipv4`、`ipv6`、`cidr`、`mac`、`email`、`iban`、`uuid`、`hexid`、`fingerprint`、`serial` 默认 `true`；`url` 关闭。`uuid` 覆盖磁盘和机器 UUID，`hexid` 覆盖 32 位及 `0x` 前缀的 16 位十六进制标识（如 WWN、machine-id），`fingerprint` 覆盖 SSH 主机密钥指纹（`SHA256:…`），`serial` 覆盖跟在 `Serial Number:`、`ID_SERIAL_SHORT=`、`"serial":`、`iSerial`、`Seriennummer:`、`s/n:` 等标签之后的序列号。 |
+| `path`                  | object | 关闭           | 按路径段假名化：`enabled`（默认 `false`）、`replace_unknown`（默认 `true`，替换保留列表之外的所有段；`false` 时只替换同时出现在词条中的段）、`preserve`（在内置常见目录名列表如 `home`、`usr`、`src` 之外追加保留的段）。 |
+| `packyme`               | object | 开启           | `enabled` 控制使用 gitleaks 规则的 packyme/privacy-filter 层。                                                                                             |
+| `secrets`               | object | 关闭           | betterleaks 层的 `enabled` 和 `rules_toml`。只在带 `betterleaks` 标签构建的二进制中有效；在普通构建中开启会导致注册失败。                                                              |
+| `restore.stream`        | bool   | `true`       | 在流式响应中还原假名。非流式响应总是被还原。                                                                                                                           |
+| `limits.max_body_bytes` | int    | `33554432`   | 超过此大小的请求体被拒绝。                                                                                                                                    |
+| `limits.mapping_ttl`    | string | `30m`        | 一个请求的映射表寿命，从请求时刻起算。必须长于上游最长的往返时间。                                                                                                                |
+| `on_error`              | string | `block`      | 检测或解析失败时的正向行为：`block` 终止请求，`passthrough` 原样转发。还原路径出错时总是原样放行。                                                                                     |
+| `audit`                 | object | 关闭           | 本地审计日志：`path`（为空即关闭；相对路径相对插件目录解析）和 `max_bytes`（默认 10 MiB，文件轮转一次到 `.1`）。每条映射和每次还原都以明文写入，见[审计日志](#审计日志)。 |
+
+## 它做什么，不做什么
+
+插件在出站时把值替换为同形状的假名，在入站时把原值放回去。它还原的是**原样**返回的内容：正文、工具调用、代码块中的假名，流式或非流式，粘着 `.bak` 或 `-backup.tar.gz` 之类后缀的，写成大写的，以及域名和邮箱地址去掉保留后缀 `.invalid` 的写法，模型会把这个后缀认作标记并省略它。它不还原模型从假名**推导**出来的东西，因为推导值不在任何映射表里：
+
+- 模型无法用假名计算。"X 的下一个地址"是在假名上算的，回来的是假名的邻居，不是原值的邻居。配置过的网络是例外：其中的地址保留所属网络，"同一个 /24"仍然成立，落在请求携带过的地址上的算术会被还原。
+- 部分假名不会还原：令牌的最后四个字符、带通配符的前缀、被截断的令牌。模型照着其他假名的样子编出来的假名也不会，比如给新文件起的名字。
+- 模型不知道假名代表什么。它无法从 `h-e2ba…` 这个名字分辨 Intel NUC 和树莓派，也会把 `100.64.0.0/10` 里的地址说成运营商级 NAT 地址。凡是从值本身而非上下文得出的结论，都是从错误的值得出的。
+- 词条在任何以单词形式出现的地方都会被替换，见[什么该进列表](#什么该进列表什么不该)。
+- 回环、未指定、广播、组播、链路本地和文档地址永远不被替换。
+- thinking 块和工具名在两个方向都不会被触碰。
+
+映射只在一个请求的生命周期内存在于内存中，是派生出来的而不是存储的：同一个值在一个会话内得到同一个假名，另一个会话得到另一套假名。映射不会离开进程，除非设置了 `audit.path`，否则不会写盘。会话的第一条消息使用真实值、后续消息使用假名是正常的；两个方向都会被处理。
+
+### 已知限制
+
+- 还原路径目前只处理 Anthropic Messages 格式；其他格式插件会记录警告并原样放行。若不想对这些格式做正向过滤，用 `skip_formats` 排除它们。
+- thinking 块在两个方向都不会被触碰。其签名与文本绑定，因此客户端 thinking 视图中的摘要显示的是假名而非原值。
+- 单独的姓氏会被渲染为名，所以单独使用的姓氏在模型回答中可能读起来像第二个名。
+- 词条在词边界匹配，下划线算边界：`nuc_old` 和 `NUC_HOST` 含有主机 `nuc`。字母和数字连成一体，所以 `nucleus` 不算。
+- 不在任何配置网络内的地址会散布在整个标记范围内，彼此没有关系。如果模型需要推理你的网络，把它们作为 `cidr` 词条加进去。
+- 请求存活期间原值以明文存在于内存中，这是还原所必需的。
+- `100.64.0.0/10` 内的真实地址和恰好落入固定 `/48` 的 ULA 网络无法被假名化，插件遇到这样的词条会拒绝启动。词条等于内置人名列表中的某个名字则没有问题：该条目会从这个插件的人名列表中剔除，日志记录一条带数量的警告，其他人名假名保持不变。
+- `path.enabled` 默认 `false`。在你的环境中确认流式还原正常后再开启：工具调用中半还原的路径比泄露一条路径危害更大。
+- betterleaks 层只存在于带 `betterleaks` 标签的构建中，共享库体积约为原来的三倍。
+- 序列号只在标签之后才被检测。正文中裸露的序列号、git 提交哈希、镜像摘要或 DNS 区域序列号被有意放过，因此没有任何标签的序列号会原样到达模型。如果它重要，把它加进词条列表。
+- 开启 `path.enabled` 后，模型看到的每个文件名都是 `f-<12 位十六进制><扩展名>`。它新建文件时往往会取同样形状的名字，这个名字不在任何映射表中，会原样到达客户端。把文件改名即可，内容会正常还原。
+
+## 从源码构建
+
+环境要求：Go 1.26 或更新、启用 CGO、`make`。
 
 ```bash
 git clone https://github.com/rheodev/cpa-plugin-privacyfilter.git
 cd cpa-plugin-privacyfilter
-
 make build
 ```
 
-默认会在仓库根目录生成共享库：
-
-- Linux: `privacyfilter.so`
-- macOS: `privacyfilter.dylib`
-- Windows: `privacyfilter.dll`
-
-指定平台构建：
+默认构建把共享库写到仓库根目录：Linux 为 `privacyfilter.so`，macOS 为 `privacyfilter.dylib`，Windows 为 `privacyfilter.dll`。用 `GOOS` 和 `GOARCH` 指定平台，用 `BUILD_DIR` 指定输出目录；此时 `machine-ids.py` 会被复制到它旁边：
 
 ```bash
-GOOS=linux GOARCH=amd64 make build
+GOOS=linux GOARCH=amd64 BUILD_DIR=dist make build
 GOOS=darwin GOARCH=arm64 make build
 GOOS=windows GOARCH=amd64 make build
 ```
 
-使用 `BUILD_DIR` 指定输出目录：
+`build/build.sh` 用 Podman 在 `golang:1.26-bookworm` 容器内为 `linux/amd64` 构建同一个共享库，因此产物可以在 `debian:bookworm-slim` 镜像中加载，与构建机器上的 glibc 无关。脚本支持 `BUILD_TAGS` 和 `VERSION`，把两个文件都输出到 `dist/`：
 
 ```bash
-BUILD_DIR=dist make build
+build/build.sh 0.4.6
 ```
 
-## 在 CLIProxyAPI 中使用
+加入 betterleaks 凭据扫描器（见 [betterleaks](#betterleaks)）；普通构建不会链接它：
 
-将共享库放入 CLIProxyAPI 的插件目录即可。Gitleaks 规则已内嵌到二进制中，无需额外文件：
+```bash
+BUILD_TAGS=betterleaks make build
+```
+
+插件注册信息：名称 `privacyfilter`，能力 `RequestInterceptor`，在 `pseudonymize` 模式下还有 `ResponseInterceptor`、`StreamChunkInterceptor` 和 `RequestCompletion`，Schema 版本 3，作者 `rheodev`。
+
+## 内部工作原理
+
+### 假名
+
+假名是 `HMAC-SHA256(secret || salt, kind || value || attempt)` 按 kind 渲染的结果。salt 每个会话派生一次，依次取自 `X-Claude-Code-Session-Id` 请求头、`metadata.user_id`，最后是首条消息的哈希，因此后续请求得到与前一次相同的假名，模型上下文保持连贯。没有随机性，也不落盘：映射表只在一个请求的生命周期内存在于内存中，在请求完成或 `mapping_ttl` 到期后释放。
+
+作为 `cidr` 词条给出的网络映射到标记范围内同前缀长度的一个网络。其中的每个地址都渲染进该网络，只有主机位来自地址自身的摘要；嵌套在另一个配置网络内的网络落在其父网络的假名之内。主机、网关和邻居对模型而言保持关联。不在任何配置网络内的地址散布在整个范围内。
+
+假名形状的选择保证没有真实值会看起来像假名：`100.64.0.0/10` 是运营商级 NAT 网段，`02:` 开头的 MAC 是本地管理地址，`.invalid` 由 RFC 2606 保留，UUID 版本位 `f` 不存在于任何 RFC 9562 版本，IBAN 银行代码以四个零开头而没有任何机构会发放，十六进制标识以 `5046` 开头，序列号以 `PF-` 开头，密钥以 `PF_` 开头。人名假名来自固定的虚构人名列表；等于其中某个名字的词条会把该条目从列表中剔除。
+
+### 正向与还原路径
+
+正向路径遍历 JSON 请求体中的每个字符串，跳过拒绝列表上的字段（标识符、工具名、模型名、thinking 块及其签名），并按固定顺序运行检测层：词条列表、结构化模式、路径层、原版插件的检测（带 Gitleaks 规则的 packyme）、betterleaks。重叠命中被合并，最长者胜出。原版检测的命中按 kind 假名化：邮箱地址作为 `email`，IP 地址作为 `ipv4` 或 `ipv6`，其余一切，密钥、电话和证件号码、银行卡，作为不透明的 `secret` 令牌，像其他假名一样被还原。还原路径在同一拒绝列表上一次扫描完响应体，只在词元边界处把假名换回原值，嵌在更长标识符里的假名不会被动。
+
+流式响应逐块还原。因为一个假名可能被切分到两个增量中，插件会扣留文本末尾仍可能长成假名的部分，已经完整且无法再延长的假名则立即还原，扣留的部分在块或消息结束前以合成增量的形式发出。测试覆盖了在每个字节位置切分的情况，包括末字节恰好可以作为另一个假名开头的假名。
+
+### 审计日志
+
+`audit.path` 开启一个按请求记录的日志，位于共享库旁（或路径所指之处）。它用于检查插件对某个请求做了什么，不是为长期运行准备的：每一行都是明文，文件里正是插件要挡在线路之外的那些值。文件以 `0600` 权限创建，只要该选项设置着，插件启动时就记录一条警告，文件在 `max_bytes` 时轮转一次到 `.1`。每行一条记录，制表符分隔：
 
 ```text
-privacyfilter/
-└── privacyfilter.so        # 或 privacyfilter.dylib / privacyfilter.dll
+<time>  request   <request id>  format=claude  session=header  body=<bytes>  out=<bytes>  distinct=<n>
+<time>  map       <request id>  <kind>  <original>  <pseudonym>
+<time>  restored  <request id>  <pseudonym>  <original>  <count>
+<time>  complete  <request id>  outcome=succeeded  stream=true  restored_distinct=<n>  restored_total=<n>
 ```
 
-然后在 CLIProxyAPI 中启用 `privacyfilter` 插件。
+`map` 行按 kind 和值排序列出该请求的整张映射表，`restored` 行列出响应中实际返回的假名及各自被换回的次数。检测到但从未返回的值只出现在 `map` 行。被脱敏而非假名化的值不出现在此日志中，它们仍像以前一样记录在普通插件日志里。
 
-插件注册信息：
+### 脱敏模式
 
-- 名称：`privacyfilter`
-- 能力：`RequestInterceptor`
-- 作者：`rheodev`
-
-## 配置
-
-插件在 CLIProxyAPI 主配置文件（`config.yaml`）中配置。`plugins.configs.<id>` 下，
-宿主字段（`enabled`、`priority`）由 CLIProxyAPI 处理，其余 YAML 子树原样透传给插件。
-
-启用插件：
-
-```yaml
-plugins:
-  enabled: true
-  dir: "plugins"
-  configs:
-    privacyfilter:
-      enabled: true
-```
-
-启用并自定义规则：
-
-```yaml
-plugins:
-  enabled: true
-  dir: "plugins"
-  configs:
-    privacyfilter:
-      enabled: true
-      gitleaks_toml: ""        # 为空时使用内嵌规则（或共享库旁的 rules/gitleaks.toml）
-      skip_models:
-        - gpt-4
-      skip_formats:
-        - openai
-```
-
-插件字段说明：
-
-| 字段              | 类型     | 默认值  | 说明                             |
-|-----------------|--------|------|--------------------------------|
-| `gitleaks_toml` | string | `""` | 自定义 gitleaks 规则文件路径，支持相对插件目录路径 |
-| `skip_models`   | array  | `[]` | 命中的模型不做脱敏                      |
-| `skip_formats`  | array  | `[]` | 命中的来源格式不做脱敏                    |
-
-当 `gitleaks_toml` 为空、且共享库旁不存在 `rules/gitleaks.toml` 时，插件使用构建时内嵌到二进制中的规则。
-
-## 工作方式
-
-插件会在 before-auth 和 after-auth 请求拦截阶段运行，然后解析 JSON 请求体：
+默认的 `mode: redact` 就是原版插件：单向，没有任何东西回来。它在 before-auth 和 after-auth 请求拦截阶段运行，然后解析 JSON 请求体：
 
 1. 检查 `skip_models` 和 `skip_formats`。
 2. 将请求体解析为 JSON。
@@ -137,7 +321,7 @@ plugins:
 5. 检测到敏感内容后，用占位符替换原文。
 6. 解析失败或未命中可处理字段时，请求保持不变。
 
-支持的请求体示例：
+支持的请求体包括 OpenAI 风格的 `messages` 和 `input`：
 
 ```json
 {
@@ -155,41 +339,17 @@ plugins:
 }
 ```
 
-## 规则
+两种模式的检测都使用 [packyme/privacy-filter](https://github.com/packyme/privacy-filter) 和 Gitleaks 规则，覆盖密钥、连接串、证书等内容。规则在构建时从 `rules/gitleaks.toml` 内嵌；运行时插件依次取配置中的 `gitleaks_toml`（若设置）、共享库旁的 `rules/gitleaks.toml`、内嵌的规则。用 `make update-rules` 更新内嵌规则并重新构建。
 
-内置规则在构建时内嵌到共享库中，来源：
+### betterleaks
 
-```text
-rules/gitleaks.toml
-```
-
-运行时按以下顺序解析规则：
-
-1. 配置项 `gitleaks_toml`（若设置）
-2. 共享库旁的 `rules/gitleaks.toml` 附带文件
-3. 构建时内嵌的规则（默认）
-
-更新内嵌规则并重新构建：
-
-```bash
-make update-rules
-make build
-```
-
-也可以通过 `gitleaks_toml` 指定自己的规则文件：
-
-```yaml
-gitleaks_toml: custom/gitleaks.toml
-```
-
-相对路径会基于插件目录解析。
+[betterleaks](https://github.com/betterleaks/betterleaks) 是规则集更大的 gitleaks 分支。它只在 `BUILD_TAGS=betterleaks` 时被编译进来，并通过 `secrets.enabled: true` 开启。其凭据校验功能会通过 HTTP 把发现的凭据发送给对应服务商，在所有构建中都被禁用，且无法通过配置开启。`secrets.rules_toml` 指向自定义规则文件；为空时使用内嵌规则。无法编译的规则文件会导致注册失败，而不会拖垮代理。
 
 ## 开发
 
-常用命令：
-
 ```bash
 go test ./...
+go test -tags betterleaks ./...
 make build
 make clean
 ```
@@ -197,10 +357,21 @@ make clean
 主要文件：
 
 ```text
-main.go                 插件元数据和构建入口
+main.go                 插件元数据、注册和构建入口
 abi.go                  CLIProxyAPI 插件 ABI 适配
-interceptor.go          请求拦截和脱敏逻辑
+interceptor.go          请求拦截：redact 与 pseudonymize 的正向路径
+response.go             非流式响应的还原路径
+stream.go               流式响应的还原路径，扣留与冲刷
+lifecycle.go            请求完成事件，释放映射表
 config.go               YAML 配置解析
+termsfile.go            词条文件格式
+detect/                 检测层：词条、模式、路径、packyme、betterleaks
+pseudo/                 HMAC 假名、按 kind 的渲染器、salt 与密钥处理
+mapping/                请求级映射表与还原器
+payload/                JSON 遍历、拒绝列表、Anthropic SSE 事件
+tools/machine-ids.py    把本机标识收集为词条文件；构建时复制到 dist/
+cmd/termsgen/           旧的生成器：从 ssh 配置和 hosts 生成词条文件
+internal/leaktest/      端到端泄露测试：没有敏感值能通过正向路径
 rules/gitleaks.toml     内置检测规则
 ```
 
@@ -214,3 +385,4 @@ privacyfilter => github.com/packyme/privacy-filter
 
 - 核心过滤逻辑：[packyme/privacy-filter](https://github.com/packyme/privacy-filter)
 - 插件运行时：[router-for-me/CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)
+- 学 AI 就上 L 站：[linux.do](https://linux.do/)
