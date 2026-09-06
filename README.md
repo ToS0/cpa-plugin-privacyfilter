@@ -2,21 +2,9 @@
 
 English | [简体中文](README.zh-CN.md)
 
-A privacy filter plugin for [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI). It sits between your
-coding assistant and the model provider and replaces identifiers such as host names, IP addresses, e-mail
-addresses, the names of people and customers, paths, serial numbers and account numbers with transparent stand-ins
-before a request leaves your machine, then puts the real values back into the answer. The model works with the
-stand-ins as if they were the real thing, administers a system, edits a config, writes a tool call, without ever
-knowing the actual names and IDs.
+A privacy filter plugin for [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI). It sits between your coding assistant and the model provider and replaces identifiers such as host names, IP addresses, e-mail addresses, the names of people and customers, paths, serial numbers and account numbers with transparent stand-ins before a request leaves your machine, then puts the real values back into the answer. The model works with the stand-ins as if they were the real thing, administers a system, edits a config, writes a tool call, without ever knowing the actual names and IDs.
 
-There are two modes. `redact` is the default and the original plugin: detected secrets, contact data and ID numbers
-become `[REDACTED]`, one way. `pseudonymize` is the reason for this fork: your own values from a list, plus
-everything the detectors find, become stable pseudonyms of the same shape, and the answer is translated back,
-streamed or not. The modes do not compete in detection. Pseudonymize runs the original plugin's automatic
-detection as its last layer, after your list and the structural patterns, so everything `redact` would find is
-found here too. The difference is what happens to a hit: thrown away, or replaced by something the model can use
-and the client gets back as the original. This document is written for `pseudonymize`; `redact` is described under
-[Redact mode](#redact-mode).
+There are two modes. `redact` is the default and the original plugin: detected secrets, contact data and ID numbers become `[REDACTED]`, one way. `pseudonymize` is the reason for this fork: your own values from a list, plus everything the detectors find, become stable pseudonyms of the same shape, and the answer is translated back, streamed or not. The modes do not compete in detection. Pseudonymize runs the original plugin's automatic detection as its last layer, after your list and the structural patterns, so everything `redact` would find is found here too. The difference is what happens to a hit: thrown away, or replaced by something the model can use and the client gets back as the original. This document is written for `pseudonymize`; `redact` is described under [Redact mode](#redact-mode).
 
 ## At a glance
 
@@ -61,36 +49,17 @@ The same value gets the same pseudonym for the whole conversation, so the model 
 
 ## Why
 
-Everything a coding assistant sends to a model ends up on somebody else's server: the prompt, the files it reads,
-the output of every command it runs. For a consultant, an administrator or a small company that is the whole
-working day in clear text: customer names, the people behind them, their e-mail addresses, host names and
-addresses of their networks, the paths under which their projects live, machine serials, disk and partition
-identifiers, SSH fingerprints, account numbers. A single breach of the provider, a subpoena, a training-data
-mistake or a screenshot of a dashboard then exposes not one secret but the map of who works with whom on what,
-and with which machines. That map is worth more to an attacker than any one password.
+Everything a coding assistant sends to a model ends up on somebody else's server: the prompt, the files it reads, the output of every command it runs. For a consultant, an administrator or a small company that is the whole working day in clear text: customer names, the people behind them, their e-mail addresses, host names and addresses of their networks, the paths under which their projects live, machine serials, disk and partition identifiers, SSH fingerprints, account numbers. A single breach of the provider, a subpoena, a training-data mistake or a screenshot of a dashboard then exposes not one secret but the map of who works with whom on what, and with which machines. That map is worth more to an attacker than any one password.
 
-Redacting such values is not enough, because a model that reads `[REDACTED]` cannot reason about the host, the
-path or the network any more, and the tool call it writes back is unusable. Pseudonymize mode keeps the request
-usable while the provider holds as little as possible: every confidential value is replaced by a stable pseudonym
-of the same shape before the request leaves the machine, and the original is put back into the answer before the
-client sees it. The model works with `h-e2ba…` and `100.71.4.18` exactly as it would with the real names, the
-provider only ever stores the pseudonyms, and the mapping never leaves the local process.
+Redacting such values is not enough, because a model that reads `[REDACTED]` cannot reason about the host, the path or the network any more, and the tool call it writes back is unusable. Pseudonymize mode keeps the request usable while the provider holds as little as possible: every confidential value is replaced by a stable pseudonym of the same shape before the request leaves the machine, and the original is put back into the answer before the client sees it. The model works with `h-e2ba…` and `100.71.4.18` exactly as it would with the real names, the provider only ever stores the pseudonyms, and the mapping never leaves the local process.
 
-What gets replaced comes from three sources. The **term list** is a plain text file with your own values: customer
-names, hosts, domains, people, networks, account numbers. The **structural patterns** need no list and catch what
-has a recognisable shape on its own: IP addresses, MACs, e-mail addresses, UUIDs, SSH fingerprints, labelled serial
-numbers, IBANs. The **original plugin's detection** runs last, with its Gitleaks rules for API keys, tokens and
-connection strings and its recognisers for phone numbers, ID numbers and bank cards, and catches what neither of
-the first two lists. The script `machine-ids.py` that ships next to the plugin fills the term list with the identifiers
-of a machine, so a new host is covered in a minute.
+What gets replaced comes from three sources. The **term list** is a plain text file with your own values: customer names, hosts, domains, people, networks, account numbers. The **structural patterns** need no list and catch what has a recognisable shape on its own: IP addresses, MACs, e-mail addresses, UUIDs, SSH fingerprints, labelled serial numbers, IBANs. The **original plugin's detection** runs last, with its Gitleaks rules for API keys, tokens and connection strings and its recognisers for phone numbers, ID numbers and bank cards, and catches what neither of the first two lists. The script `machine-ids.py` that ships next to the plugin fills the term list with the identifiers of a machine, so a new host is covered in a minute.
 
 ## Installation
 
-You need a running CLIProxyAPI, the two files from a release or from `dist/` after a build (see
-[Building from source](#building-from-source)), and Python 3 for the helper script.
+You need a running CLIProxyAPI, the two files from a release or from `dist/` after a build (see [Building from source](#building-from-source)), and Python 3 for the helper script.
 
-1. Put the shared library and the script into the plugin directory of CLIProxyAPI. This is the directory named by
-   `plugins.dir` in `config.yaml`, usually `plugins/`:
+1. Put the shared library and the script into the plugin directory of CLIProxyAPI. This is the directory named by `plugins.dir` in `config.yaml`, usually `plugins/`:
 
    ```text
    plugins/
@@ -100,16 +69,14 @@ You need a running CLIProxyAPI, the two files from a release or from `dist/` aft
    └── terms.txt               # your term list, step 3
    ```
 
-2. Create the secret. The pseudonyms are derived from it; without it the plugin refuses to start. Any random bytes,
-   at least 32 of them:
+2. Create the secret. The pseudonyms are derived from it; without it the plugin refuses to start. Any random bytes, at least 32 of them:
 
    ```bash
    head -c 48 /dev/urandom | base64 > plugins/pseudonym.secret
    chmod 600 plugins/pseudonym.secret
    ```
 
-3. Create the term list. The quickest way is the script, which asks what to do and writes the file; run it on the
-   machine the proxy runs on, with `sudo` so it can read the hardware serials:
+3. Create the term list. The quickest way is the script, which asks what to do and writes the file; run it on the machine the proxy runs on, with `sudo` so it can read the hardware serials:
 
    ```bash
    sudo python3 plugins/machine-ids.py
@@ -146,9 +113,7 @@ The plugin reads the secret and the term list at start only. After every change 
 
 ## The term list
 
-The term list is the file named by `terms_file`, `plugins/terms.txt` in the layout above. It is the one file you
-maintain. Every line is one value that must never leave the machine in clear text, together with the kind of thing
-it is, so the plugin can render a pseudonym of the same shape.
+The term list is the file named by `terms_file`, `plugins/terms.txt` in the layout above. It is the one file you maintain. Every line is one value that must never leave the machine in clear text, together with the kind of thing it is, so the plugin can render a pseudonym of the same shape.
 
 ### Format
 
@@ -166,19 +131,13 @@ kunde-x path_segment                 # a directory name that must not appear in 
 {value: "Müller & Söhne", kind: person}                   # a literal with spaces, YAML form
 ```
 
-A plain line is split on white space: the first word is the value, the optional second word the kind, and the
-word `ignore_case` sets the flag. A value that contains spaces or starts with `{` or `#` goes into the YAML form,
-which takes the same keys as a `terms` entry in `config.yaml`: `value` or `regex`, `kind`, `ignore_case`.
+A plain line is split on white space: the first word is the value, the optional second word the kind, and the word `ignore_case` sets the flag. A value that contains spaces or starts with `{` or `#` goes into the YAML form, which takes the same keys as a `terms` entry in `config.yaml`: `value` or `regex`, `kind`, `ignore_case`.
 
-A literal matches at word boundaries only: `nuc` matches in `nuc`, `nuc.local`, `nuc_old` and `NUC-2`, but not in
-`nucleus`. Letters and digits continue a word, everything else, including the underscore, ends it. A regular
-expression matches wherever it matches, so write the boundaries yourself with `\b` and do not use `^` or `$`: the
-expression runs against whole messages, not against single lines.
+A literal matches at word boundaries only: `nuc` matches in `nuc`, `nuc.local`, `nuc_old` and `NUC-2`, but not in `nucleus`. Letters and digits continue a word, everything else, including the underscore, ends it. A regular expression matches wherever it matches, so write the boundaries yourself with `\b` and do not use `^` or `$`: the expression runs against whole messages, not against single lines.
 
 ### Kinds
 
-The kind decides what the pseudonym looks like. The model sees something that has the same shape as the original,
-so it keeps working normally, and the plugin can tell a pseudonym from a real value when the answer comes back.
+The kind decides what the pseudonym looks like. The model sees something that has the same shape as the original, so it keeps working normally, and the plugin can tell a pseudonym from a real value when the answer comes back.
 
 | Kind           | Use it for                                    | Pseudonym                                   |
 |----------------|-----------------------------------------------|---------------------------------------------|
@@ -199,62 +158,26 @@ so it keeps working normally, and the plugin can tell a pseudonym from a real va
 | `filename`     | a file name; the extension is kept. Used by the path layer with `filenames: all` only | `f-<12 hex><ext>`      |
 | `secret`       | anything else                                 | `PF_<12 hex>`                               |
 
-The same value gets the same pseudonym for the whole conversation, another conversation gets other pseudonyms.
-The pseudonyms are derived from the secret, not stored anywhere.
+The same value gets the same pseudonym for the whole conversation, another conversation gets other pseudonyms. The pseudonyms are derived from the secret, not stored anywhere.
 
 ### What belongs in the list and what does not
 
-- **Names, not words.** A term is replaced everywhere it appears as a word. A host called `backup` turns
-  `rsync --backup` into nonsense for the model, a user called `admin` breaks every `admin` in a config file. Leave
-  such entries out, or use a regular expression that matches only the form you mean, such as the host name followed
-  by its domain.
-- **Name your systems so that they are not words.** The rule above is easy to keep for customers and hard for
-  your own machines, because a short host name is convenient and the script collects it. A machine called `time`,
-  `cut` or `mail` turns every shell command, every option and every sentence that contains the word into a
-  pseudonym. The round trip still works, the client gets the word back, but the model reads a hex token where the
-  command stood. When you name a machine, a share, a service or a Wi-Fi, pick a token that occurs nowhere else:
-  a number suffix (`nas01`, not `nas`), a made-up word, a name with a hyphen. The script flags a collected host
-  name that is also a command on the machine; rename the machine, or keep the term and accept the noise.
-- **What the patterns already catch can stay out.** IP addresses, MACs, e-mail addresses, UUIDs, fingerprints and
-  labelled serials are detected on their own, and the original plugin's automatic detection with its Gitleaks rules
-  catches API keys, tokens, connection strings, phone and ID numbers and bank cards. They belong in the list when the model has to see their structure:
-  your networks as `cidr` terms, so that host, gateway and neighbour stay in one network for the model.
-- **Addresses that are never replaced.** Loopback, unspecified, broadcast, multicast, link-local and the
-  documentation ranges stay as they are, so the model still sees a `bind` to loopback for what it is. Real
-  addresses in `100.64.0.0/10` and in the fixed ULA `/48` cannot be terms, because that is where the pseudonyms live;
-  the plugin refuses to start with such a term.
-- **One file, many machines.** Every machine can add its own block, see the next chapter. The plugin drops exact
-  duplicates at start, so a gateway that appears in three blocks is one term.
-- **The file is clear text.** It holds exactly the values the plugin exists to keep off the wire. Keep it and its
-  backups readable by the proxy's user only, and never paste it into a conversation that runs through the proxy.
+- **Names, not words.** A term is replaced everywhere it appears as a word. A host called `backup` turns `rsync --backup` into nonsense for the model, a user called `admin` breaks every `admin` in a config file. Leave such entries out, or use a regular expression that matches only the form you mean, such as the host name followed by its domain.
+- **Name your systems so that they are not words.** The rule above is easy to keep for customers and hard for your own machines, because a short host name is convenient and the script collects it. A machine called `time`, `cut` or `mail` turns every shell command, every option and every sentence that contains the word into a pseudonym. The round trip still works, the client gets the word back, but the model reads a hex token where the command stood. When you name a machine, a share, a service or a Wi-Fi, pick a token that occurs nowhere else: a number suffix (`nas01`, not `nas`), a made-up word, a name with a hyphen. The script flags a collected host name that is also a command on the machine; rename the machine, or keep the term and accept the noise.
+- **What the patterns already catch can stay out.** IP addresses, MACs, e-mail addresses, UUIDs, fingerprints and labelled serials are detected on their own, and the original plugin's automatic detection with its Gitleaks rules catches API keys, tokens, connection strings, phone and ID numbers and bank cards. They belong in the list when the model has to see their structure: your networks as `cidr` terms, so that host, gateway and neighbour stay in one network for the model.
+- **Addresses that are never replaced.** Loopback, unspecified, broadcast, multicast, link-local and the documentation ranges stay as they are, so the model still sees a `bind` to loopback for what it is. Real addresses in `100.64.0.0/10` and in the fixed ULA `/48` cannot be terms, because that is where the pseudonyms live; the plugin refuses to start with such a term.
+- **One file, many machines.** Every machine can add its own block, see the next chapter. The plugin drops exact duplicates at start, so a gateway that appears in three blocks is one term.
+- **The file is clear text.** It holds exactly the values the plugin exists to keep off the wire. Keep it and its backups readable by the proxy's user only, and never paste it into a conversation that runs through the proxy.
 
-`terms` in `config.yaml` takes the same entries in YAML form and is meant for a handful of values; the file is
-for the list you maintain.
+`terms` in `config.yaml` takes the same entries in YAML form and is meant for a handful of values; the file is for the list you maintain.
 
 ### Paths and file names
 
-A path such as `/home/mwendler/Projekte/kunde-x/src/main.go` carries its confidential part in the middle: the
-login name, the customer. The path layer, switched on with `path.enabled: true`, takes a path apart at its slashes
-and treats the directories and the file name differently, because they play different roles.
+A path such as `/home/mwendler/Projekte/kunde-x/src/main.go` carries its confidential part in the middle: the login name, the customer. The path layer, switched on with `path.enabled: true`, takes a path apart at its slashes and treats the directories and the file name differently, because they play different roles.
 
-**Directories** are replaced when they are unknown. A built-in list of a few hundred ordinary names, `home`, `usr`,
-`etc`, `src`, `build`, `docs`, `node_modules` and the like, stays as it is, so the model still sees a home
-directory and a source tree. Every other directory becomes `d-<12 hex>`, whether it is on your term list or not.
-That is the safety net for the customer directory nobody thought to list: a name that identifies somebody is
-gone even if the list does not know it. The model does not need the real name to work there. It sees the same
-pseudonym for the same directory throughout the conversation, writes it into its tool calls, and the client gets
-the real path back, so a file lands where it should. What the model loses is the meaning of the name: it cannot
-tell from `d-<hex>` that a directory holds media files. When that gets in the way, add the harmless names to
-`path.preserve`, or set `replace_unknown: false` to replace only directories that are also terms, at the price of
-the safety net.
+**Directories** are replaced when they are unknown. A built-in list of a few hundred ordinary names, `home`, `usr`, `etc`, `src`, `build`, `docs`, `node_modules` and the like, stays as it is, so the model still sees a home directory and a source tree. Every other directory becomes `d-<12 hex>`, whether it is on your term list or not. That is the safety net for the customer directory nobody thought to list: a name that identifies somebody is gone even if the list does not know it. The model does not need the real name to work there. It sees the same pseudonym for the same directory throughout the conversation, writes it into its tool calls, and the client gets the real path back, so a file lands where it should. What the model loses is the meaning of the name: it cannot tell from `d-<hex>` that a directory holds media files. When that gets in the way, add the harmless names to `path.preserve`, or set `replace_unknown: false` to replace only directories that are also terms, at the price of the safety net.
 
-**File names** are left alone by default. `README.md`, `main.go`, `config.yaml` say what a file is, they are the
-same in a million repositories, and they are the index by which a model finds its way around a tree: replacing
-them protects nothing and costs every `ls` its meaning. A file named after a customer carries the customer's
-name, and that name is a term, which the term layer finds inside the file name at its word boundary:
-`kunde-x-vertrag.pdf` goes out as `d-<hex>-vertrag.pdf`. A file name without an extension, `Makefile`, `LICENSE`,
-is on the preserve list; other names without an extension count as directories. `path.filenames: all` restores
-the old behaviour and replaces every file name outside the preserve list as `f-<12 hex><ext>`.
+**File names** are left alone by default. `README.md`, `main.go`, `config.yaml` say what a file is, they are the same in a million repositories, and they are the index by which a model finds its way around a tree: replacing them protects nothing and costs every `ls` its meaning. A file named after a customer carries the customer's name, and that name is a term, which the term layer finds inside the file name at its word boundary: `kunde-x-vertrag.pdf` goes out as `d-<hex>-vertrag.pdf`. A file name without an extension, `Makefile`, `LICENSE`, is on the preserve list; other names without an extension count as directories. `path.filenames: all` restores the old behaviour and replaces every file name outside the preserve list as `f-<12 hex><ext>`.
 
 ```yaml
 path:
@@ -264,14 +187,11 @@ path:
   preserve: [media-files]  # directory names of yours that identify nobody and should stay readable
 ```
 
-The plugin never replaces on the way back. A file name the model invents that happens to look like a pseudonym
-reaches the client as it is; with the default the model sees real file names and has no pattern to imitate.
+The plugin never replaces on the way back. A file name the model invents that happens to look like a pseudonym reaches the client as it is; with the default the model sees real file names and has no pattern to imitate.
 
 ## Filling the list with machine-ids.py
 
-`machine-ids.py` collects the identifiers of the machine it runs on and writes them in the format above. It needs
-nothing but Python 3, reads only local sources, and nothing leaves the machine. Started on a terminal without
-options it asks what to do:
+`machine-ids.py` collects the identifiers of the machine it runs on and writes them in the format above. It needs nothing but Python 3, reads only local sources, and nothing leaves the machine. Started on a terminal without options it asks what to do:
 
 ```text
 $ sudo python3 plugins/machine-ids.py
@@ -288,14 +208,7 @@ Merge into /opt/cliproxyapi/plugins/terms.txt (a backup is written first)? [Y/n]
 … done: 93 terms
 ```
 
-It collects: host name and mDNS name as a regular expression that also matches the name with any domain, the
-entries of `/etc/hosts`, machine-id and boot id, DMI product UUID and the serials of board, chassis and product
-(root only), every network interface with MAC, permanent MAC, IPv4, IPv6, networks and gateways, DNS servers and
-search domains, Wi-Fi SSID and BSSID, Bluetooth adapters, block devices with UUID, PARTUUID, PTUUID, serial, WWN
-and label, USB device serials, the battery serial, SSH host keys and the user's own public keys as fingerprints
-and key material, GPG key fingerprints, the ZeroTier node id, and local user accounts. Generic account names such
-as `admin` or `root` are left out with a note, because they are words. A value that already has the shape of a
-pseudonym is written as a comment with the reason.
+It collects: host name and mDNS name as a regular expression that also matches the name with any domain, the entries of `/etc/hosts`, machine-id and boot id, DMI product UUID and the serials of board, chassis and product (root only), every network interface with MAC, permanent MAC, IPv4, IPv6, networks and gateways, DNS servers and search domains, Wi-Fi SSID and BSSID, Bluetooth adapters, block devices with UUID, PARTUUID, PTUUID, serial, WWN and label, USB device serials, the battery serial, SSH host keys and the user's own public keys as fingerprints and key material, GPG key fingerprints, the ZeroTier node id, and local user accounts. Generic account names such as `admin` or `root` are left out with a note, because they are words. A value that already has the shape of a pseudonym is written as a comment with the reason.
 
 Options for scripts and for a look before merging:
 
@@ -309,17 +222,11 @@ Options for scripts and for a look before merging:
 | `--all-interfaces` | include container and VM interfaces (veth, docker, virbr, ...)                             |
 | `--check TERMS`    | read an existing term file and list every term that is also a command or an ordinary word on this machine; collects nothing |
 
-The block of a machine sits between two marker comments that carry its host name. Running the script again on the
-same machine replaces that block and leaves the blocks of other machines alone, so the term file of the proxy can
-hold every machine you work on: run the script on each machine with `-o`, copy the output to the proxy over `scp`,
-and merge it there. Copy it, do not paste it into a conversation. Then restart the proxy.
+The block of a machine sits between two marker comments that carry its host name. Running the script again on the same machine replaces that block and leaves the blocks of other machines alone, so the term file of the proxy can hold every machine you work on: run the script on each machine with `-o`, copy the output to the proxy over `scp`, and merge it there. Copy it, do not paste it into a conversation. Then restart the proxy.
 
 ## Telling the model
 
-The model does see that the values are pseudonyms: `.invalid` is a reserved top-level domain, `100.64.0.0/10` is
-the carrier-grade NAT range, a UUID with version nibble `f` exists in no RFC. Left to itself it comments on that,
-asks whether the host name is a placeholder, drops the `.invalid`, or "corrects" the value. Tell it once, in the
-project's `CLAUDE.md` or in the system prompt, and it stops:
+The model does see that the values are pseudonyms: `.invalid` is a reserved top-level domain, `100.64.0.0/10` is the carrier-grade NAT range, a UUID with version nibble `f` exists in no RFC. Left to itself it comments on that, asks whether the host name is a placeholder, drops the `.invalid`, or "corrects" the value. Tell it once, in the project's `CLAUDE.md` or in the system prompt, and it stops:
 
 ```markdown
 Host names like `h-<hex>`, domains like `d-<hex>.invalid`, addresses in `100.64.0.0/10`, MACs starting with
@@ -330,53 +237,22 @@ the answer. Treat them as the real names: use them verbatim, never shorten or "f
 
 ## Checklist
 
-The chapters above explain each piece. This is the order in which to do them, so that nothing is forgotten. Work
-through it once when you set up, and again whenever a customer, a machine or a project is added.
+The chapters above explain each piece. This is the order in which to do them, so that nothing is forgotten. Work through it once when you set up, and again whenever a customer, a machine or a project is added.
 
-1. **The secret.** Create `pseudonym.secret`, mode 0600, owned by the proxy's user. It is not a password you need
-   to remember, but whoever has it and your term list can compute the pseudonyms. Keep it out of backups you
-   hand to others and out of every repository.
-2. **The machines.** Run `machine-ids.py` with `sudo` on the proxy host and on every machine you work from, with
-   `--lan` on the one that sees your network. Copy each output to the proxy with `scp`, merge it, restart. This
-   covers host names, addresses, networks, MACs, disk and machine identifiers, keys and accounts, without you
-   having to type any of them.
-3. **The customers.** For every customer, add by hand what the script cannot know: the company name as a
-   `person` term if it is a name (`{value: "Müller & Söhne", kind: person}`), the people you deal with as
-   `person` terms with `ignore_case`, their domains as `domain`, their hosts as `host` and their networks as
-   `cidr`, their account numbers as `iban`. Think of the places a name appears: e-mail signatures, ticket
-   titles, hosts file entries, VPN configs, invoices.
-4. **Yourself.** Your own name, your company, your domains, your login name if it is not a word, your e-mail
-   addresses, your bank account. The script adds the local accounts and the host names; the rest is yours to add.
-5. **The directories.** Switch on `path.enabled: true`. With the default `replace_unknown: true` every unknown
-   directory is replaced, so a project directory named after a customer is covered even if you forgot the
-   customer. Add directory names of your own that identify nobody to `path.preserve` when they get in the way.
-   File names stay readable and are replaced only where a term matches inside them, see
-   [Paths and file names](#paths-and-file-names).
-6. **The words.** Read through `terms.txt` once and strike every term that is also an ordinary word: `backup`,
-   `admin`, `data`, `test`, `nas`. Such a term breaks commands and configs for the model. Replace it by a
-   regular expression that matches only the form you mean, or leave it to the directory layer. Run
-   `machine-ids.py --check terms.txt` on the proxy host: it lists every term that is also a command or an ordinary
-   word there. From now on, name every new machine, share,
-   service and network with a token that is not a word, `nas01` rather than `nas`, see
-   [What belongs in the list](#what-belongs-in-the-list-and-what-does-not).
-7. **The model.** Put the note from [Telling the model](#telling-the-model) into the `CLAUDE.md` of every project
-   that runs through the proxy, or into the system prompt of your client.
-8. **The check.** Restart the proxy and look for the registration line with the number of terms. Then send one
-   request that names a customer, a host and a path, and read the plugin's log line: it counts what it replaced
-   by kind. For a closer look set `audit.path` for a few requests, read the mapping table, and switch it off
-   again; the file is clear text. `machine-ids.py --summary` shows what the script found without printing a
-   value.
-9. **The other clients.** Only Claude Code's request format is restored on the way back. If anything else talks
-   to the proxy, list its format under `skip_formats` or accept that its answers arrive with pseudonyms.
-10. **Keeping it current.** A new customer, a new machine, a new disk, a new key: none of it is covered until it is
-    in the list. Re-run the script after hardware changes, add the customer when the project starts, and restart
-    the proxy after every change; terms are read at start only. Never paste `terms.txt` or the script's output
-    into a conversation that runs through the proxy: what is not yet loaded is not yet replaced.
+1. **The secret.** Create `pseudonym.secret`, mode 0600, owned by the proxy's user. It is not a password you need to remember, but whoever has it and your term list can compute the pseudonyms. Keep it out of backups you hand to others and out of every repository.
+2. **The machines.** Run `machine-ids.py` with `sudo` on the proxy host and on every machine you work from, with `--lan` on the one that sees your network. Copy each output to the proxy with `scp`, merge it, restart. This covers host names, addresses, networks, MACs, disk and machine identifiers, keys and accounts, without you having to type any of them.
+3. **The customers.** For every customer, add by hand what the script cannot know: the company name as a `person` term if it is a name (`{value: "Müller & Söhne", kind: person}`), the people you deal with as `person` terms with `ignore_case`, their domains as `domain`, their hosts as `host` and their networks as `cidr`, their account numbers as `iban`. Think of the places a name appears: e-mail signatures, ticket titles, hosts file entries, VPN configs, invoices.
+4. **Yourself.** Your own name, your company, your domains, your login name if it is not a word, your e-mail addresses, your bank account. The script adds the local accounts and the host names; the rest is yours to add.
+5. **The directories.** Switch on `path.enabled: true`. With the default `replace_unknown: true` every unknown directory is replaced, so a project directory named after a customer is covered even if you forgot the customer. Add directory names of your own that identify nobody to `path.preserve` when they get in the way. File names stay readable and are replaced only where a term matches inside them, see [Paths and file names](#paths-and-file-names).
+6. **The words.** Read through `terms.txt` once and strike every term that is also an ordinary word: `backup`, `admin`, `data`, `test`, `nas`. Such a term breaks commands and configs for the model. Replace it by a regular expression that matches only the form you mean, or leave it to the directory layer. Run `machine-ids.py --check terms.txt` on the proxy host: it lists every term that is also a command or an ordinary word there. From now on, name every new machine, share, service and network with a token that is not a word, `nas01` rather than `nas`, see [What belongs in the list](#what-belongs-in-the-list-and-what-does-not).
+7. **The model.** Put the note from [Telling the model](#telling-the-model) into the `CLAUDE.md` of every project that runs through the proxy, or into the system prompt of your client.
+8. **The check.** Restart the proxy and look for the registration line with the number of terms. Then send one request that names a customer, a host and a path, and read the plugin's log line: it counts what it replaced by kind. For a closer look set `audit.path` for a few requests, read the mapping table, and switch it off again; the file is clear text. `machine-ids.py --summary` shows what the script found without printing a value.
+9. **The other clients.** Only Claude Code's request format is restored on the way back. If anything else talks to the proxy, list its format under `skip_formats` or accept that its answers arrive with pseudonyms.
+10. **Keeping it current.** A new customer, a new machine, a new disk, a new key: none of it is covered until it is in the list. Re-run the script after hardware changes, add the customer when the project starts, and restart the proxy after every change; terms are read at start only. Never paste `terms.txt` or the script's output into a conversation that runs through the proxy: what is not yet loaded is not yet replaced.
 
 ## Configuration
 
-The plugin is configured in CLIProxyAPI's `config.yaml` under `plugins.configs.privacyfilter`. The host consumes
-`enabled` and `priority`; everything else is passed to the plugin. A complete example:
+The plugin is configured in CLIProxyAPI's `config.yaml` under `plugins.configs.privacyfilter`. The host consumes `enabled` and `priority`; everything else is passed to the plugin. A complete example:
 
 ```yaml
 plugins:
@@ -408,8 +284,7 @@ Fields read in both modes:
 | `skip_models`   | array  | `[]`    | Models that bypass the plugin.                                                         |
 | `skip_formats`  | array  | `[]`    | Source formats that bypass the plugin.                                                 |
 
-Fields read in `pseudonymize` mode only. With `mode: redact` they are ignored and the plugin behaves byte for byte
-like the original:
+Fields read in `pseudonymize` mode only. With `mode: redact` they are ignored and the plugin behaves byte for byte like the original:
 
 | Field                    | Type   | Default        | Description                                                                                                                                                                                                                                                                                                               |
 |--------------------------|--------|----------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -428,9 +303,7 @@ like the original:
 
 ### Switching detectors off
 
-Every structural detector has its own switch under `patterns`. Someone who works with public addresses all day
-and wants them left alone, or who needs the model to reason about real subnets, switches the network detectors
-off and keeps the rest:
+Every structural detector has its own switch under `patterns`. Someone who works with public addresses all day and wants them left alone, or who needs the model to reason about real subnets, switches the network detectors off and keeps the rest:
 
 ```yaml
     privacyfilter:
@@ -442,72 +315,36 @@ off and keeps the rest:
         mac: false
 ```
 
-The switches reach every layer. The original plugin's detection has no switches of its own and reports IP
-addresses and e-mail addresses next to its credential rules; with `ipv4`, `ipv6` or `email` set to `false` its
-findings of that kind are dropped as well, so a value of a switched-off kind is replaced by no layer. The term list
-is the exception: an entry with `kind: ipv4` or `kind: cidr` is replaced whatever the switches say, because you
-put it there. If `machine-ids.py` collected addresses you do not want replaced, strike them from the file.
+The switches reach every layer. The original plugin's detection has no switches of its own and reports IP addresses and e-mail addresses next to its credential rules; with `ipv4`, `ipv6` or `email` set to `false` its findings of that kind are dropped as well, so a value of a switched-off kind is replaced by no layer. The term list is the exception: an entry with `kind: ipv4` or `kind: cidr` is replaced whatever the switches say, because you put it there. If `machine-ids.py` collected addresses you do not want replaced, strike them from the file.
 
-Switching a layer off as a whole works the same way: `packyme.enabled: false` drops the original detection with
-its credential, phone and bank card rules, `path.enabled: false` leaves directories alone, `secrets.enabled`
-governs betterleaks. Every change needs a proxy restart, and a conversation that was started before the change
-should be started afresh, because its pseudonyms change with the settings.
+Switching a layer off as a whole works the same way: `packyme.enabled: false` drops the original detection with its credential, phone and bank card rules, `path.enabled: false` leaves directories alone, `secrets.enabled` governs betterleaks. Every change needs a proxy restart, and a conversation that was started before the change should be started afresh, because its pseudonyms change with the settings.
 
 ## What it does and what it does not do
 
-The plugin replaces values by pseudonyms of the same shape on the way out and puts the originals back on the way in.
-It restores what comes back **verbatim**: a pseudonym in running text, in a tool call, in a code block, streamed or
-not, with a suffix such as `.bak` or `-backup.tar.gz` glued to it, written in upper case, or, for a domain or an
-e-mail address, without the reserved `.invalid` that a model recognises as a marker and drops. It does not restore
-what the model **derives** from a pseudonym, because a derived value is in no mapping table:
+The plugin replaces values by pseudonyms of the same shape on the way out and puts the originals back on the way in. It restores what comes back **verbatim**: a pseudonym in running text, in a tool call, in a code block, streamed or not, with a suffix such as `.bak` or `-backup.tar.gz` glued to it, written in upper case, or, for a domain or an e-mail address, without the reserved `.invalid` that a model recognises as a marker and drops. It does not restore what the model **derives** from a pseudonym, because a derived value is in no mapping table:
 
-- The model cannot compute with a pseudonym. "The next address after X" is computed on the pseudonym and comes back
-  as the pseudonym's neighbour, not the original's. A configured network is the exception: addresses inside it keep
-  their network, so "the same /24" holds, and arithmetic that lands on an address the request carried comes back.
-- A partial pseudonym is not restored: the last four characters of a token, a prefix with a wildcard, a token cut
-  in the middle. Nor is a pseudonym the model invented from the pattern of others, such as a name for a new file.
-- The model does not know what a pseudonym stands for. It cannot tell an Intel NUC from a Raspberry Pi by the
-  name `h-e2ba…`, and it will call a `100.64.0.0/10` address a carrier-grade NAT address. Every conclusion it
-  draws from the value itself, rather than from the context, is drawn from the wrong value.
+- The model cannot compute with a pseudonym. "The next address after X" is computed on the pseudonym and comes back as the pseudonym's neighbour, not the original's. A configured network is the exception: addresses inside it keep their network, so "the same /24" holds, and arithmetic that lands on an address the request carried comes back.
+- A partial pseudonym is not restored: the last four characters of a token, a prefix with a wildcard, a token cut in the middle. Nor is a pseudonym the model invented from the pattern of others, such as a name for a new file.
+- The model does not know what a pseudonym stands for. It cannot tell an Intel NUC from a Raspberry Pi by the name `h-e2ba…`, and it will call a `100.64.0.0/10` address a carrier-grade NAT address. Every conclusion it draws from the value itself, rather than from the context, is drawn from the wrong value.
 - A term of the list is replaced everywhere it appears as a word, see [What belongs in the list](#what-belongs-in-the-list-and-what-does-not).
 - Loopback, unspecified, broadcast, multicast, link-local and the documentation addresses are never replaced.
 - Thinking blocks and tool names are never touched in either direction.
 
-The mapping lives in memory for one request and is derived, not stored: the same value gets the same pseudonym
-throughout one conversation, another conversation gets other pseudonyms. Nothing about the mapping leaves the
-process, and nothing is written to disk unless `audit.path` is set. A conversation that starts with the real value
-in the first message and continues with the pseudonym in later messages is fine; only the direction matters, and
-both directions are handled.
+The mapping lives in memory for one request and is derived, not stored: the same value gets the same pseudonym throughout one conversation, another conversation gets other pseudonyms. Nothing about the mapping leaves the process, and nothing is written to disk unless `audit.path` is set. A conversation that starts with the real value in the first message and continues with the pseudonym in later messages is fine; only the direction matters, and both directions are handled.
 
 ### Known limits
 
-- Only the Anthropic Messages schema is handled on the return path today; the plugin logs a warning and passes other
-  formats through unchanged. Register it with `skip_formats` for those formats if you want no forward filtering
-  either.
-- Thinking blocks are never touched in either direction. Their signature is bound to the text, so a summary in
-  the client's thinking view shows the pseudonyms, not the originals.
-- A person pseudonym for a lone surname is rendered as a given name, so a surname used on its own may read as a
-  second given name in the model's answer.
-- A term matches at word boundaries, and the underscore is a boundary: `nuc_old` and `NUC_HOST` contain the host
-  `nuc`. Letters and digits bind, so `nucleus` does not.
-- Addresses outside every configured network are spread over the whole marker range without any relation to each
-  other. Add your networks as `cidr` terms if the model has to reason about them.
-- The original values are in memory in clear text while the request is alive, as they have to be for the
-  restore.
-- A real address in `100.64.0.0/10` or a ULA network that happens to match the fixed `/48` cannot be
-  pseudonymized. The plugin refuses to start with such a term. A term that equals one of the built-in person
-  names is fine: that entry is left out of the name list for this plugin, a warning with the count is logged,
-  and the other person pseudonyms stay as they are.
-- `path.enabled` defaults to `false`. Switch it on after you have seen the stream restore work in your setup: a
-  half-restored path in a tool call does more harm than a leaked one.
-- The betterleaks layer exists only in a build with the `betterleaks` tag, which roughly triples the size of the
-  shared library.
-- A serial number is only detected behind a label. A bare serial in running text, a git commit hash, an image
-  digest or a DNS zone serial are left alone on purpose, so a serial printed without any label reaches the
-  model unchanged. Add it to the term list if it matters.
-- With `path.filenames: all`, the model sees every file name as `f-<12 hex><ext>`. When it creates a new file it
-  tends to pick a name of the same shape, which is in no mapping table and reaches the client as is. Rename the
-  file; the content is restored normally. The default `terms` leaves file names readable and avoids this.
+- Only the Anthropic Messages schema is handled on the return path today; the plugin logs a warning and passes other formats through unchanged. Register it with `skip_formats` for those formats if you want no forward filtering either.
+- Thinking blocks are never touched in either direction. Their signature is bound to the text, so a summary in the client's thinking view shows the pseudonyms, not the originals.
+- A person pseudonym for a lone surname is rendered as a given name, so a surname used on its own may read as a second given name in the model's answer.
+- A term matches at word boundaries, and the underscore is a boundary: `nuc_old` and `NUC_HOST` contain the host `nuc`. Letters and digits bind, so `nucleus` does not.
+- Addresses outside every configured network are spread over the whole marker range without any relation to each other. Add your networks as `cidr` terms if the model has to reason about them.
+- The original values are in memory in clear text while the request is alive, as they have to be for the restore.
+- A real address in `100.64.0.0/10` or a ULA network that happens to match the fixed `/48` cannot be pseudonymized. The plugin refuses to start with such a term. A term that equals one of the built-in person names is fine: that entry is left out of the name list for this plugin, a warning with the count is logged, and the other person pseudonyms stay as they are.
+- `path.enabled` defaults to `false`. Switch it on after you have seen the stream restore work in your setup: a half-restored path in a tool call does more harm than a leaked one.
+- The betterleaks layer exists only in a build with the `betterleaks` tag, which roughly triples the size of the shared library.
+- A serial number is only detected behind a label. A bare serial in running text, a git commit hash, an image digest or a DNS zone serial are left alone on purpose, so a serial printed without any label reaches the model unchanged. Add it to the term list if it matters.
+- With `path.filenames: all`, the model sees every file name as `f-<12 hex><ext>`. When it creates a new file it tends to pick a name of the same shape, which is in no mapping table and reaches the client as is. Rename the file; the content is restored normally. The default `terms` leaves file names readable and avoids this.
 
 ## Building from source
 
@@ -519,9 +356,7 @@ cd cpa-plugin-privacyfilter
 make build
 ```
 
-The default build writes the shared library to the repository root, `privacyfilter.so` on Linux,
-`privacyfilter.dylib` on macOS, `privacyfilter.dll` on Windows. Build for a specific platform with `GOOS` and
-`GOARCH`, and use `BUILD_DIR` to place the output elsewhere; then `machine-ids.py` is copied next to it:
+The default build writes the shared library to the repository root, `privacyfilter.so` on Linux, `privacyfilter.dylib` on macOS, `privacyfilter.dll` on Windows. Build for a specific platform with `GOOS` and `GOARCH`, and use `BUILD_DIR` to place the output elsewhere; then `machine-ids.py` is copied next to it:
 
 ```bash
 GOOS=linux GOARCH=amd64 BUILD_DIR=dist make build
@@ -529,9 +364,7 @@ GOOS=darwin GOARCH=arm64 make build
 GOOS=windows GOARCH=amd64 make build
 ```
 
-`build/build.sh` builds the same library for `linux/amd64` inside a `golang:1.26-bookworm` container with Podman, so
-the result loads in a `debian:bookworm-slim` image regardless of the glibc on the build machine. It honours
-`BUILD_TAGS` and `VERSION` and writes both files to `dist/`:
+`build/build.sh` builds the same library for `linux/amd64` inside a `golang:1.26-bookworm` container with Podman, so the result loads in a `debian:bookworm-slim` image regardless of the glibc on the build machine. It honours `BUILD_TAGS` and `VERSION` and writes both files to `dist/`:
 
 ```bash
 build/build.sh 0.4.6
@@ -543,54 +376,27 @@ Include the betterleaks credential scanner (see [betterleaks](#betterleaks)); th
 BUILD_TAGS=betterleaks make build
 ```
 
-Plugin metadata: name `privacyfilter`, capability `RequestInterceptor`, in `pseudonymize` mode also
-`ResponseInterceptor`, `StreamChunkInterceptor` and `RequestCompletion`, schema version 3, author `rheodev`.
+Plugin metadata: name `privacyfilter`, capability `RequestInterceptor`, in `pseudonymize` mode also `ResponseInterceptor`, `StreamChunkInterceptor` and `RequestCompletion`, schema version 3, author `rheodev`.
 
 ## How it works inside
 
 ### Pseudonyms
 
-Pseudonyms are `HMAC-SHA256(secret || salt, kind || value || attempt)` rendered per kind. The salt is derived once
-per conversation from the `X-Claude-Code-Session-Id` header, then from `metadata.user_id`, and finally from a hash
-of the first message, so a follow-up request produces the same pseudonyms as the previous one and the model's
-context stays coherent. Nothing is random and nothing is stored on disk: the mapping table lives in memory for the
-lifetime of one request and is released on request completion or after `mapping_ttl`.
+Pseudonyms are `HMAC-SHA256(secret || salt, kind || value || attempt)` rendered per kind. The salt is derived once per conversation from the `X-Claude-Code-Session-Id` header, then from `metadata.user_id`, and finally from a hash of the first message, so a follow-up request produces the same pseudonyms as the previous one and the model's context stays coherent. Nothing is random and nothing is stored on disk: the mapping table lives in memory for the lifetime of one request and is released on request completion or after `mapping_ttl`.
 
-A network given as a `cidr` term maps to a network of the same prefix length inside the marker range. Every
-address inside it is rendered into that network, only the host bits come from the address's own digest, and a
-network inside another configured network lies inside that one's pseudonym. Host, gateway and neighbour stay
-related for the model. Addresses outside every configured network are spread over the whole range.
+A network given as a `cidr` term maps to a network of the same prefix length inside the marker range. Every address inside it is rendered into that network, only the host bits come from the address's own digest, and a network inside another configured network lies inside that one's pseudonym. Host, gateway and neighbour stay related for the model. Addresses outside every configured network are spread over the whole range.
 
-Pseudonym shapes are chosen so that no real value can look like one: `100.64.0.0/10` is the carrier-grade NAT
-range, `02:` MACs are locally administered, `.invalid` is reserved by RFC 2606, the UUID version nibble `f` exists
-in no RFC 9562 version, the IBAN bank code starts with four zeros no issuer hands out, hex ids start with `5046`,
-serials with `PF-`, secrets with `PF_`. Person pseudonyms come from a fixed list of invented names; a term that
-equals one of them drops that entry from the list.
+Pseudonym shapes are chosen so that no real value can look like one: `100.64.0.0/10` is the carrier-grade NAT range, `02:` MACs are locally administered, `.invalid` is reserved by RFC 2606, the UUID version nibble `f` exists in no RFC 9562 version, the IBAN bank code starts with four zeros no issuer hands out, hex ids start with `5046`, serials with `PF-`, secrets with `PF_`. Person pseudonyms come from a fixed list of invented names; a term that equals one of them drops that entry from the list.
 
 ### Forward and return path
 
-The forward path walks every string of the JSON body except those on a deny list (identifiers, tool names, model
-names, thinking blocks and their signatures) and runs the detection layers in fixed order: the term list, the
-structural patterns, the path layer, the original plugin's detection (packyme with the Gitleaks rules), betterleaks.
-Overlapping hits are merged, the longest wins. A hit of the original detection is pseudonymized by kind: an
-e-mail address as `email`, an IP address as `ipv4` or `ipv6`, everything else, secrets, phone and ID numbers, bank
-cards, as an opaque `secret` token that is restored like any other pseudonym. The
-return path scans the response body in one pass over the same deny list and swaps pseudonyms back only at token
-boundaries, so a pseudonym embedded in a longer identifier is left alone.
+The forward path walks every string of the JSON body except those on a deny list (identifiers, tool names, model names, thinking blocks and their signatures) and runs the detection layers in fixed order: the term list, the structural patterns, the path layer, the original plugin's detection (packyme with the Gitleaks rules), betterleaks. Overlapping hits are merged, the longest wins. A hit of the original detection is pseudonymized by kind: an e-mail address as `email`, an IP address as `ipv4` or `ipv6`, everything else, secrets, phone and ID numbers, bank cards, as an opaque `secret` token that is restored like any other pseudonym. The return path scans the response body in one pass over the same deny list and swaps pseudonyms back only at token boundaries, so a pseudonym embedded in a longer identifier is left alone.
 
-Streamed responses are restored chunk by chunk. Because a pseudonym may be split across two deltas, the plugin
-holds back the tail of the text that could still grow into a pseudonym, restores a pseudonym that is complete
-and cannot grow right away, and flushes the held tail as a synthetic delta before the block or the message ends.
-Splitting at every byte position is covered by the tests, including a pseudonym whose last byte could begin
-another one.
+Streamed responses are restored chunk by chunk. Because a pseudonym may be split across two deltas, the plugin holds back the tail of the text that could still grow into a pseudonym, restores a pseudonym that is complete and cannot grow right away, and flushes the held tail as a synthetic delta before the block or the message ends. Splitting at every byte position is covered by the tests, including a pseudonym whose last byte could begin another one.
 
 ### Audit log
 
-`audit.path` switches on a per-request log next to the shared library (or wherever the path points). It is meant
-for checking what the plugin did with a request, not for permanent operation: every line is clear text, so the
-file holds exactly the values the plugin exists to keep off the wire. The file is created with mode `0600`, the
-plugin logs a warning at start-up while the option is set, and the file is rotated once to `.1` at `max_bytes`.
-Lines are tab-separated, one record per line:
+`audit.path` switches on a per-request log next to the shared library (or wherever the path points). It is meant for checking what the plugin did with a request, not for permanent operation: every line is clear text, so the file holds exactly the values the plugin exists to keep off the wire. The file is created with mode `0600`, the plugin logs a warning at start-up while the option is set, and the file is rotated once to `.1` at `max_bytes`. Lines are tab-separated, one record per line:
 
 ```text
 <time>  request   <request id>  format=claude  session=header  body=<bytes>  out=<bytes>  distinct=<n>
@@ -599,15 +405,11 @@ Lines are tab-separated, one record per line:
 <time>  complete  <request id>  outcome=succeeded  stream=true  restored_distinct=<n>  restored_total=<n>
 ```
 
-`map` lines list the whole mapping table of the request sorted by kind and value, `restored` lines the
-pseudonyms that actually came back in the response with how often each was swapped. A value that was detected
-but never returned appears in `map` only. Values that were redacted rather than pseudonymized do not appear in
-this log; they stay in the ordinary plugin log as before.
+`map` lines list the whole mapping table of the request sorted by kind and value, `restored` lines the pseudonyms that actually came back in the response with how often each was swapped. A value that was detected but never returned appears in `map` only. Values that were redacted rather than pseudonymized do not appear in this log; they stay in the ordinary plugin log as before.
 
 ### Redact mode
 
-`mode: redact`, the default, is the original plugin: one-way, nothing comes back. It runs for both before-auth and
-after-auth request interception hooks, then parses the JSON body:
+`mode: redact`, the default, is the original plugin: one-way, nothing comes back. It runs for both before-auth and after-auth request interception hooks, then parses the JSON body:
 
 1. Checks `skip_models` and `skip_formats`.
 2. Parses the request body as JSON.
@@ -637,19 +439,11 @@ Supported request shapes include OpenAI-style `messages` and `input` bodies:
 }
 ```
 
-Detection in both modes uses [packyme/privacy-filter](https://github.com/packyme/privacy-filter) with Gitleaks
-rules for secrets, connection strings, certificates and similar data. The rules are embedded at build time from
-`rules/gitleaks.toml`; at runtime the plugin takes `gitleaks_toml` from the configuration if set, else a
-`rules/gitleaks.toml` sidecar next to the shared library, else the embedded rules. Update the embedded rules with
-`make update-rules` and rebuild.
+Detection in both modes uses [packyme/privacy-filter](https://github.com/packyme/privacy-filter) with Gitleaks rules for secrets, connection strings, certificates and similar data. The rules are embedded at build time from `rules/gitleaks.toml`; at runtime the plugin takes `gitleaks_toml` from the configuration if set, else a `rules/gitleaks.toml` sidecar next to the shared library, else the embedded rules. Update the embedded rules with `make update-rules` and rebuild.
 
 ### betterleaks
 
-[betterleaks](https://github.com/betterleaks/betterleaks) is a gitleaks fork with a larger rule set. It is
-compiled in only with `BUILD_TAGS=betterleaks` and switched on with `secrets.enabled: true`. Its credential
-validation, which would send found credentials to their providers over HTTP, is disabled in every build and
-cannot be enabled by configuration. `secrets.rules_toml` points to a custom rules file; empty uses the embedded
-rules. A rules file that does not compile fails registration instead of taking the proxy down.
+[betterleaks](https://github.com/betterleaks/betterleaks) is a gitleaks fork with a larger rule set. It is compiled in only with `BUILD_TAGS=betterleaks` and switched on with `secrets.enabled: true`. Its credential validation, which would send found credentials to their providers over HTTP, is disabled in every build and cannot be enabled by configuration. `secrets.rules_toml` points to a custom rules file; empty uses the embedded rules. A rules file that does not compile fails registration instead of taking the proxy down.
 
 ## Development
 
