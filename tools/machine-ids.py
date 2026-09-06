@@ -128,6 +128,11 @@ class Terms:
         pattern = r"(?i)\b" + re.escape(name).replace("\\-", "-") + r"(?:\.[a-z0-9-]+)*\b"
         self.lines.append('{regex: "%s", kind: host}' % pattern.replace("\\", "\\\\"))
         self.counts["host"] += 1
+        if name in GENERIC_ACCOUNTS or name in GENERIC_LABELS or shutil.which(name):
+            # The term stays, the machine is real; but every occurrence of
+            # the word will be replaced, in commands and prose alike.
+            self.note("host %s is also a command or an ordinary word: every '%s' in any text will be "
+                      "replaced; rename the machine (nas01, not nas) or accept the noise" % (name, name))
 
     def note(self, text):
         self.lines.append("# " + text)

@@ -167,6 +167,13 @@ The pseudonyms are derived from the secret, not stored anywhere.
   `rsync --backup` into nonsense for the model, a user called `admin` breaks every `admin` in a config file. Leave
   such entries out, or use a regular expression that matches only the form you mean, such as the host name followed
   by its domain.
+- **Name your systems so that they are not words.** The rule above is easy to keep for customers and hard for
+  your own machines, because a short host name is convenient and the script collects it. A machine called `time`,
+  `cut` or `mail` turns every shell command, every option and every sentence that contains the word into a
+  pseudonym. The round trip still works, the client gets the word back, but the model reads a hex token where the
+  command stood. When you name a machine, a share, a service or a Wi-Fi, pick a token that occurs nowhere else:
+  a number suffix (`nas01`, not `nas`), a made-up word, a name with a hyphen. The script flags a collected host
+  name that is also a command on the machine; rename the machine, or keep the term and accept the noise.
 - **What the patterns already catch can stay out.** IP addresses, MACs, e-mail addresses, UUIDs, fingerprints and
   labelled serials are detected on their own, and the original plugin's automatic detection with its Gitleaks rules
   catches API keys, tokens, connection strings, phone and ID numbers and bank cards. They belong in the list when the model has to see their structure:
@@ -305,7 +312,10 @@ through it once when you set up, and again whenever a customer, a machine or a p
    [Paths and file names](#paths-and-file-names).
 6. **The words.** Read through `terms.txt` once and strike every term that is also an ordinary word: `backup`,
    `admin`, `data`, `test`, `nas`. Such a term breaks commands and configs for the model. Replace it by a
-   regular expression that matches only the form you mean, or leave it to the directory layer.
+   regular expression that matches only the form you mean, or leave it to the directory layer. Read the notes
+   the script wrote: it flags a host name that is also a command. From now on, name every new machine, share,
+   service and network with a token that is not a word, `nas01` rather than `nas`, see
+   [What belongs in the list](#what-belongs-in-the-list-and-what-does-not).
 7. **The model.** Put the note from [Telling the model](#telling-the-model) into the `CLAUDE.md` of every project
    that runs through the proxy, or into the system prompt of your client.
 8. **The check.** Restart the proxy and look for the registration line with the number of terms. Then send one
