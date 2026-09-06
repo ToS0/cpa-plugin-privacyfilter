@@ -279,6 +279,47 @@ the answer. Treat them as the real names: use them verbatim, never shorten or "f
 `.invalid`, never invent new ones in the same shape, and do not comment on their form.
 ```
 
+## Checklist
+
+The chapters above explain each piece. This is the order in which to do them, so that nothing is forgotten. Work
+through it once when you set up, and again whenever a customer, a machine or a project is added.
+
+1. **The secret.** Create `pseudonym.secret`, mode 0600, owned by the proxy's user. It is not a password you need
+   to remember, but whoever has it and your term list can compute the pseudonyms. Keep it out of backups you
+   hand to others and out of every repository.
+2. **The machines.** Run `machine-ids.py` with `sudo` on the proxy host and on every machine you work from, with
+   `--lan` on the one that sees your network. Copy each output to the proxy with `scp`, merge it, restart. This
+   covers host names, addresses, networks, MACs, disk and machine identifiers, keys and accounts, without you
+   having to type any of them.
+3. **The customers.** For every customer, add by hand what the script cannot know: the company name as a
+   `person` term if it is a name (`{value: "Müller & Söhne", kind: person}`), the people you deal with as
+   `person` terms with `ignore_case`, their domains as `domain`, their hosts as `host` and their networks as
+   `cidr`, their account numbers as `iban`. Think of the places a name appears: e-mail signatures, ticket
+   titles, hosts file entries, VPN configs, invoices.
+4. **Yourself.** Your own name, your company, your domains, your login name if it is not a word, your e-mail
+   addresses, your bank account. The script adds the local accounts and the host names; the rest is yours to add.
+5. **The directories.** Switch on `path.enabled: true`. With the default `replace_unknown: true` every unknown
+   directory is replaced, so a project directory named after a customer is covered even if you forgot the
+   customer. Add directory names of your own that identify nobody to `path.preserve` when they get in the way.
+   File names stay readable and are replaced only where a term matches inside them, see
+   [Paths and file names](#paths-and-file-names).
+6. **The words.** Read through `terms.txt` once and strike every term that is also an ordinary word: `backup`,
+   `admin`, `data`, `test`, `nas`. Such a term breaks commands and configs for the model. Replace it by a
+   regular expression that matches only the form you mean, or leave it to the directory layer.
+7. **The model.** Put the note from [Telling the model](#telling-the-model) into the `CLAUDE.md` of every project
+   that runs through the proxy, or into the system prompt of your client.
+8. **The check.** Restart the proxy and look for the registration line with the number of terms. Then send one
+   request that names a customer, a host and a path, and read the plugin's log line: it counts what it replaced
+   by kind. For a closer look set `audit.path` for a few requests, read the mapping table, and switch it off
+   again; the file is clear text. `machine-ids.py --summary` shows what the script found without printing a
+   value.
+9. **The other clients.** Only Claude Code's request format is restored on the way back. If anything else talks
+   to the proxy, list its format under `skip_formats` or accept that its answers arrive with pseudonyms.
+10. **Keeping it current.** A new customer, a new machine, a new disk, a new key: none of it is covered until it is
+    in the list. Re-run the script after hardware changes, add the customer when the project starts, and restart
+    the proxy after every change; terms are read at start only. Never paste `terms.txt` or the script's output
+    into a conversation that runs through the proxy: what is not yet loaded is not yet replaced.
+
 ## Configuration
 
 The plugin is configured in CLIProxyAPI's `config.yaml` under `plugins.configs.privacyfilter`. The host consumes
