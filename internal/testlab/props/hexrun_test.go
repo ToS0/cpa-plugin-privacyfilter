@@ -4,9 +4,11 @@ package props
 // an address. hasTokenBoundaries asks whether a letter or a digit stands next
 // to the match; the separator of the address itself, the dot and the colon,
 // is not a letter and not a digit, so a window inside a longer run of octets
-// or hex groups passes the test. The fuzzer found it in the round-trip
-// target. The values here are built from numbers, so the shape is the same on
-// every machine.
+// or hex groups passed that test. The fuzzer found it in the round-trip
+// target. The layer now looks one step further: a separator directly outside
+// the window with a digit of the same run beyond it makes the window part of
+// something longer, and it is not an address. The values here are built from
+// numbers, so the shape is the same on every machine.
 
 import (
 	"fmt"
@@ -38,7 +40,6 @@ func hexGroups(n, width int) string {
 
 // A run that cannot be an address must not be reported as one.
 func TestProps_AddressInsideALongerRun(t *testing.T) {
-	skipOpenFinding(t)
 	cases := []struct {
 		name string
 		text string

@@ -68,9 +68,10 @@ func FuzzPropsHoldbackBounds(f *testing.F) {
 		if h < 0 || h > len(text) {
 			t.Fatalf("Holdback(%q) = %d, outside 0..%d", text, h, len(text))
 		}
-		if max := tab.MaxPseudonymLen(); max > 0 && h > max {
-			t.Errorf("Holdback(%q) = %d, above MaxPseudonymLen = %d", text, h, max)
-		}
+		// The bound of MaxPseudonymLen holds for a text without pseudonyms
+		// back to back; a random text may glue two, and then the run is
+		// held whole. TestProps_HoldbackOverTableValues asserts the bound
+		// over texts that cannot.
 
 		head, tail := text[:len(text)-h], text[len(text)-h:]
 		if utf8.ValidString(text) && (!utf8.ValidString(head) || !utf8.ValidString(tail)) {

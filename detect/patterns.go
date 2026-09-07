@@ -164,24 +164,34 @@ func (p *patternsDetector) Scan(text string) []Match {
 	// neighbours does not swallow the ones that start inside it: collect
 	// resumes one rune after a rejected start.
 	bounded := func(start, end int) bool { return hasTokenBoundaries(text, start, end) }
+	// An address is one run of groups, and a run with more groups than an
+	// address has is no address: a dotted quad inside "17.18.19.20.21" or
+	// eight hex groups inside twelve are windows of something else, a
+	// version, a fingerprint, an identifier. The group separator next to a
+	// digit of the same run on either side rejects the window; the
+	// separator alone, as in "reach 10.0.0.7." or "]:8080", does not.
+	dottedRun := func(start, end int) bool {
+		return bounded(start, end) && !insideRun(text, start, end, '.', isDigitByte)
+	}
+	colonRun := func(start, end int) bool { return bounded(start, end) && !insideRun(text, start, end, ':', isHexByte) }
 
 	// An address that identifies nothing is left alone, so the model keeps
 	// seeing loopback, the unspecified address, broadcast, multicast,
 	// link-local and the documentation ranges for what they are; see
 	// specialAddr. A term of the maintained list still wins over this rule.
-	ordinary := func(s, e int) bool { return bounded(s, e) && !specialAddr(text[s:e]) }
+	ordinary := func(s, e int) bool { return dottedRun(s, e) && !specialAddr(text[s:e]) }
 	if p.cfg.CIDR {
 		collect(text, rxCIDR4, ordinary, func(s, e int) { add(s, e, KindCIDR, prioCIDR) })
 		collect(text, rxCIDR4Mask, ordinary, func(s, e int) { add(s, e, KindCIDR, prioCIDR) })
 		collect(text, rxCIDR4Wild,
-			func(s, e int) bool { return bounded(s, e) && strings.Contains(text[s:e], "*") },
+			func(s, e int) bool { return dottedRun(s, e) && strings.Contains(text[s:e], "*") },
 			func(s, e int) { add(s, e, KindCIDR, prioCIDR) })
 	}
 	if p.cfg.IPv4 {
 		collect(text, rxIPv4, ordinary, func(s, e int) { add(s, e, KindIPv4, prioIPv4) })
 	}
 	if p.cfg.IPv6 || p.cfg.CIDR {
-		scanIPv6(text, func(s, e int) {
+		scanIPv6(text, colonRun, func(s, e int) {
 			if specialAddr(text[s:e]) {
 				return
 			}
@@ -199,7 +209,15 @@ func (p *patternsDetector) Scan(text string) []Match {
 		})
 	}
 	if p.cfg.MAC {
-		collect(text, rxMAC, bounded, func(s, e int) { add(s, e, KindMAC, prioMAC) })
+		collect(text, rxMAC,
+			func(s, e int) bool {
+				sep := byte(':')
+				if strings.IndexByte(text[s:e], '-') >= 0 {
+					sep = '-'
+				}
+				return bounded(s, e) && !insideRun(text, s, e, sep, isHexByte)
+			},
+			func(s, e int) { add(s, e, KindMAC, prioMAC) })
 	}
 	if p.cfg.Email {
 		collect(text, rxEmail, bounded, func(s, e int) { add(s, e, KindEmail, prioEmail) })
@@ -380,11 +398,31 @@ func collect(text string, re *regexp.Regexp, accept func(start, end int) bool, e
 	}
 }
 
+// insideRun reports whether the window [start, end) continues a run of
+// groups on either side: the separator sep directly outside the window with
+// a byte of the group class directly beyond it.
+func insideRun(text string, start, end int, sep byte, group func(byte) bool) bool {
+	if start >= 2 && text[start-1] == sep && group(text[start-2]) {
+		return true
+	}
+	if end+1 < len(text) && text[end] == sep && group(text[end+1]) {
+		return true
+	}
+	return false
+}
+
+func isDigitByte(b byte) bool { return b >= '0' && b <= '9' }
+
+func isHexByte(b byte) bool {
+	return isDigitByte(b) || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F')
+}
+
 // scanIPv6 reports every IPv6 address in text. Candidates come from runs of
 // address characters; netip decides what parses. Only runs that carry the
 // compressed "::" or the seven colons of the full form are considered, which
-// keeps hardware addresses and clock times out of the search entirely.
-func scanIPv6(text string, emit func(start, end int)) {
+// keeps hardware addresses and clock times out of the search entirely. accept
+// judges a candidate by its neighbours before it is emitted.
+func scanIPv6(text string, accept func(start, end int) bool, emit func(start, end int)) {
 	for _, loc := range rxV6Run.FindAllStringIndex(text, -1) {
 		run := text[loc[0]:loc[1]]
 		if !strings.Contains(run, "::") && strings.Count(run, ":") < 7 {
@@ -412,7 +450,7 @@ func scanIPv6(text string, emit func(start, end int)) {
 						continue
 					}
 				}
-				if addr, err := netip.ParseAddr(cand); err == nil && addr.Is6() {
+				if addr, err := netip.ParseAddr(cand); err == nil && addr.Is6() && (accept == nil || accept(s, e)) {
 					end = e
 					break
 				}

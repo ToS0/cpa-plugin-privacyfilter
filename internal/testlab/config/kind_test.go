@@ -92,9 +92,10 @@ func TestConfig_KindNearMissesAreRefused(t *testing.T) {
 	}
 }
 
-// The report for a wrong kind names the position and quotes the word, and
-// that is all it does. The accepted vocabulary is nowhere in it, and the
-// position is an index into the merged list, not a line of the term file.
+// The report for a wrong kind names the position, quotes the word and lists
+// the accepted vocabulary. The position is an index into the list handed to
+// the constructor; the wiring in main.go reports the line of the term file
+// instead, which it knows and the constructor does not.
 func TestConfig_InvalidKindReport(t *testing.T) {
 	_, err := detect.NewTerms(detect.TermsConfig{
 		WordBoundary: true,
@@ -120,5 +121,7 @@ func TestConfig_InvalidKindReport(t *testing.T) {
 		}
 	}
 	t.Logf("report: %s", msg)
-	t.Logf("accepted kinds named in the report: %d of %d", named, len(configKinds))
+	if named != len(configKinds) {
+		t.Errorf("the report names %d of %d accepted kinds", named, len(configKinds))
+	}
 }

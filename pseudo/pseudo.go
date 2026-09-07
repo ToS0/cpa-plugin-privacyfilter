@@ -16,6 +16,7 @@
 package pseudo
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"errors"
@@ -153,6 +154,11 @@ func mixByte(p, h byte, n int) byte {
 // NewGenerator binds a secret and a salt. The HMAC key is the concatenation
 // secret || salt. renderers may be nil, in which case DefaultRenderers is
 // used; a kind without a renderer falls back to the secret renderer.
+//
+// The constructor does not judge the secret: a short one renders like any
+// other, and tests build generators over fixed strings. The rule of
+// MinSecretLen is applied where a secret enters service, in LoadSecret, and
+// a caller that takes a secret from elsewhere checks it with CheckSecret.
 func NewGenerator(secret, salt []byte, renderers map[detect.Kind]Renderer) *Generator {
 	if renderers == nil {
 		renderers = DefaultRenderers()
@@ -257,6 +263,16 @@ func (g *Generator) Digest(kind detect.Kind, value string, attempt int) []byte {
 // The stream holdback keeps at most MaxLen-1 bytes.
 func (g *Generator) MaxLen() int {
 	return g.maxLen
+}
+
+// CheckSecret applies the rule of LoadSecret to a secret that came from
+// elsewhere: ErrSecretTooShort when fewer than MinSecretLen bytes remain
+// after trimming, nil otherwise.
+func CheckSecret(secret []byte) error {
+	if len(bytes.TrimSpace(secret)) < MinSecretLen {
+		return ErrSecretTooShort
+	}
+	return nil
 }
 
 // IsPseudonym reports whether s, taken as a whole, has the shape of a

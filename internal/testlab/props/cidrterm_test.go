@@ -3,14 +3,15 @@ package props
 // A term declared as a network whose value has a slash but no address in
 // front of it. Generator.Pseudonym composes a cidr pseudonym out of an
 // address pseudonym and the prefix length as written. When the address part
-// is neither an address nor a wildcard quad, the address renderer falls back
-// to the opaque token, and the composed result reads "PF_<hex>/24" - a shape
-// no renderer knows, so the generator's own IsPseudonym rejects what the
-// generator wrote.
+// was a wildcard but no quad, the wildcard renderer fell back to the opaque
+// token and kept the suffix, and the composed result read "PF_<hex>/24" - a
+// shape no renderer knows, so the generator's own IsPseudonym rejected what
+// the generator wrote. Such a value is now replaced by the opaque token
+// whole, suffix included.
 //
-// The wiring does not stop it either: main.go tries netip.ParsePrefix on a
-// cidr term only to collect the networks whose structure is kept, and a value
-// that does not parse is simply not collected. The fuzzer found it in
+// The wiring does not stop it: main.go tries netip.ParsePrefix on a cidr
+// term only to collect the networks whose structure is kept, and a value that
+// does not parse is simply not collected. The fuzzer found it in
 // FuzzPropsPseudonymShape.
 
 import (
@@ -34,7 +35,6 @@ func brokenWildcards() []string {
 
 // The generator's own output has to be recognised as a pseudonym.
 func TestProps_CidrTermWithABrokenWildcard(t *testing.T) {
-	skipOpenFinding(t)
 	gen := lab.Gen()
 	for _, value := range brokenWildcards() {
 		p := gen.Pseudonym(detect.KindCIDR, value, 0)

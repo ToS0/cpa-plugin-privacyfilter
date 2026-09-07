@@ -368,7 +368,10 @@ type Restorer interface {
 	// unchanged and changed == false.
 	//
 	// A pseudonym is only replaced where it stands on its own: an occurrence
-	// that continues a token on either side is left untouched. Person
+	// that continues a token on either side is left untouched. A pseudonym
+	// that directly follows another pseudonym stands on its own, because
+	// the forward pass writes two terms that touch in the text back to
+	// back; the run is restored as a whole. Person
 	// pseudonyms are ordinary words, so without that rule a pseudonym such as
 	// "Ruth" would rewrite the middle of "Ruthless" in the model's answer,
 	// and an address pseudonym would rewrite the front of a longer address.
@@ -389,9 +392,11 @@ type Restorer interface {
 	// the first rule exists for is a complete pseudonym whose last byte
 	// happens to begin another pseudonym. The result is 0 when nothing is
 	// pending, never splits a UTF-8 sequence and is at most
-	// MaxPseudonymLen(). The stream does not call Holdback and Restore by
-	// hand; it keeps a Tail, which also carries the one bit the two calls
-	// cannot: whether the byte in front of the text continued a word.
+	// MaxPseudonymLen(), unless pseudonyms follow each other without a
+	// gap, in which case the whole run waits. The stream does not call
+	// Holdback and Restore by hand; it keeps a Tail, which also carries the
+	// one bit the two calls cannot: whether the byte in front of the text
+	// continued a word.
 	Holdback(text string) int
 	// Hits returns how often Restore swapped each pseudonym back so far,
 	// keyed by pseudonym. The map is a copy; the counting is safe for the
@@ -577,12 +582,12 @@ func (r *restorer) restore(text string, escaped, glued, next bool) (string, bool
 	last := 0
 
 	for i := 0; i < len(text); {
-		if !tr.starts[text[i]] {
+		if !tr.starts[text[i]] || leftGlued(text, i, glued) {
 			i++
 			continue
 		}
-		hit, end := tr.longestAt(text, i)
-		if hit == nil || !delimitedAt(text, i, end, glued, next) {
+		hits, ends, status := tr.chain(text, i, true)
+		if len(hits) == 0 || !(status == chainAlone || (status == chainAtEnd && !next)) {
 			i++
 			continue
 		}
@@ -591,14 +596,16 @@ func (r *restorer) restore(text string, escaped, glued, next bool) (string, bool
 			changed = true
 		}
 		b.WriteString(text[last:i])
-		if escaped {
-			b.WriteString(hit.escaped)
-		} else {
-			b.WriteString(hit.plain)
+		for _, hit := range hits {
+			if escaped {
+				b.WriteString(hit.escaped)
+			} else {
+				b.WriteString(hit.plain)
+			}
+			r.t.countHit(hit.pseudonym)
 		}
-		r.t.countHit(hit.pseudonym)
-		i = end
-		last = end
+		i = ends[len(ends)-1]
+		last = i
 	}
 
 	if !changed {
@@ -606,25 +613,6 @@ func (r *restorer) restore(text string, escaped, glued, next bool) (string, bool
 	}
 	b.WriteString(text[last:])
 	return b.String(), true
-}
-
-// longestAt returns the terminal node of the longest pseudonym starting at
-// text[i] and the byte offset just behind it, or nil when none starts there.
-func (tr *trie) longestAt(text string, i int) (*trieNode, int) {
-	node := tr.root
-	var hit *trieNode
-	end := 0
-	for j := i; j < len(text); j++ {
-		next, ok := node.children[text[j]]
-		if !ok {
-			break
-		}
-		node = next
-		if node.terminal {
-			hit, end = node, j+1
-		}
-	}
-	return hit, end
 }
 
 // isTokenRune reports whether r continues a token for the boundary rule:
@@ -636,38 +624,88 @@ func isTokenRune(r rune) bool {
 	return unicode.IsLetter(r) || unicode.IsDigit(r)
 }
 
-// delimitedAt reports whether the match text[start:end] stands on its own.
-// Only the sides that actually carry a token rune are checked: a pseudonym
-// that begins or ends with punctuation may sit directly against a letter
+// leftGlued reports whether a pseudonym beginning at text[i] would continue
+// the word in front of it. Only a pseudonym that begins with a token rune
+// can: one that begins with punctuation may sit directly against a letter
 // without growing a word, which keeps matches inside JSON and inside paths
-// working.
-//
-// The edges of text count as delimiters unless the caller says otherwise:
-// glued means the rune in front of text continued a word, next means the
-// rune behind it does. A whole body has neither. The stream knows both,
-// because it has delivered the text in front and holds the text behind, so
-// a pseudonym split from its neighbouring word by exactly the chunk boundary
-// is judged as it would be in one piece.
-func delimitedAt(text string, start, end int, glued, next bool) bool {
-	if first, _ := utf8.DecodeRuneInString(text[start:end]); isTokenRune(first) {
-		if start > 0 {
-			if prev, _ := utf8.DecodeLastRuneInString(text[:start]); isTokenRune(prev) {
-				return false
-			}
-		} else if glued {
-			return false
-		}
+// working. At the front of text the caller says whether a word ended there.
+func leftGlued(text string, i int, glued bool) bool {
+	first, _ := utf8.DecodeRuneInString(text[i:])
+	if !isTokenRune(first) {
+		return false
 	}
-	if last, _ := utf8.DecodeLastRuneInString(text[start:end]); isTokenRune(last) {
-		if end < len(text) {
-			if after, _ := utf8.DecodeRuneInString(text[end:]); isTokenRune(after) {
-				return false
-			}
-		} else if next {
-			return false
-		}
+	if i == 0 {
+		return glued
 	}
-	return true
+	prev, _ := utf8.DecodeLastRuneInString(text[:i])
+	return isTokenRune(prev)
+}
+
+// chainStatus says how a run of pseudonyms ends.
+type chainStatus int
+
+const (
+	// chainAlone: the run ends in front of a delimiter or with a pseudonym
+	// whose last rune is no token rune, and stands on its own.
+	chainAlone chainStatus = iota
+	// chainGlued: a token rune follows that begins no pseudonym, so the run
+	// continues a word and none of it is a pseudonym.
+	chainGlued
+	// chainAtEnd: the last pseudonym of the run ends with the text and ends
+	// in a token rune; the byte behind the text decides.
+	chainAtEnd
+	// chainPartial: the text ends inside a walk down the trie, so a pseudonym
+	// may still grow.
+	chainPartial
+)
+
+// chain collects the pseudonyms that follow each other without a gap from
+// text[i]: the longest at i, then, when a token rune follows and begins
+// another, the longest at that position, and so on. Two pseudonyms the
+// forward pass wrote back to back, for two terms that touched in the text,
+// are one word to the boundary rule, and neither would come back without
+// this; a pseudonym next to a pseudonym is the plugin's own output and stands
+// alone as a run. The hits are returned with the end of each. whole says the
+// text is complete, so a walk that reaches its end is decided by what it
+// found; a fragment reports chainPartial there instead.
+func (tr *trie) chain(text string, i int, whole bool) (hits []*trieNode, ends []int, status chainStatus) {
+	pos := i
+	for {
+		node := tr.root
+		var hit *trieNode
+		end := 0
+		j := pos
+		for ; j < len(text); j++ {
+			next, ok := node.children[text[j]]
+			if !ok {
+				break
+			}
+			node = next
+			if node.terminal {
+				hit, end = node, j+1
+			}
+		}
+		if !whole && j == len(text) && len(node.children) > 0 {
+			return hits, ends, chainPartial
+		}
+		if hit == nil {
+			return hits, ends, chainGlued
+		}
+		hits, ends = append(hits, hit), append(ends, end)
+		if last, _ := utf8.DecodeLastRuneInString(text[pos:end]); !isTokenRune(last) {
+			return hits, ends, chainAlone
+		}
+		if end == len(text) {
+			return hits, ends, chainAtEnd
+		}
+		if after, _ := utf8.DecodeRuneInString(text[end:]); !isTokenRune(after) {
+			return hits, ends, chainAlone
+		}
+		if !tr.starts[text[end]] {
+			return hits, ends, chainGlued
+		}
+		pos = end
+	}
 }
 
 // Holdback implements Restorer. It is the scan of Restore without the
@@ -680,9 +718,10 @@ func delimitedAt(text string, start, end int, glued, next bool) bool {
 // fragment may turn it into a longer pseudonym, and the scan of the joined
 // text decides. A complete pseudonym that ends with the text and ends in a
 // letter or digit is undecided as well, because the next byte may glue it
-// to a word, in which case it is no pseudonym; it is held whole. A held
-// tail is at most as long as the longest pseudonym, and it begins at a
-// pseudonym's first byte, which is ASCII, so it never splits a rune.
+// to a word, in which case it is no pseudonym; it is held whole, and so is
+// a run of pseudonyms without a gap that ends so. A held tail begins at a
+// pseudonym's first byte, which is ASCII, so it never splits a rune, and it
+// is at most as long as the longest pseudonym unless it is such a run.
 //
 // Before this scan the holdback was the longest suffix that is a proper
 // prefix of some pseudonym, which cut a complete pseudonym in two whenever
@@ -704,51 +743,21 @@ func (r *restorer) holdback(text string, glued bool) int {
 		return 0
 	}
 	for i := 0; i < len(text); {
-		if !tr.starts[text[i]] {
+		if !tr.starts[text[i]] || leftGlued(text, i, glued) {
+			// A pseudonym that would continue the word in front of it is
+			// never restored, so it is not worth waiting for either.
 			i++
 			continue
 		}
-		// A pseudonym that would continue the word in front of it is never
-		// restored, so it is not worth waiting for either.
-		first, _ := utf8.DecodeRuneInString(text[i:])
-		if isTokenRune(first) {
-			if i > 0 {
-				if prev, _ := utf8.DecodeLastRuneInString(text[:i]); isTokenRune(prev) {
-					i++
-					continue
-				}
-			} else if glued {
-				i++
-				continue
-			}
-		}
-		node := tr.root
-		var hit *trieNode
-		end := 0
-		j := i
-		for ; j < len(text); j++ {
-			next, ok := node.children[text[j]]
-			if !ok {
-				break
-			}
-			node = next
-			if node.terminal {
-				hit, end = node, j+1
-			}
-		}
-		if j == len(text) && len(node.children) > 0 {
+		_, ends, status := tr.chain(text, i, false)
+		switch status {
+		case chainPartial, chainAtEnd:
 			return len(text) - i
+		case chainAlone:
+			i = ends[len(ends)-1]
+		default:
+			i++
 		}
-		if hit != nil && end == len(text) {
-			if last, _ := utf8.DecodeLastRuneInString(text[i:end]); isTokenRune(last) {
-				return len(text) - i
-			}
-		}
-		if hit != nil && delimitedAt(text, i, end, false, false) {
-			i = end
-			continue
-		}
-		i++
 	}
 	return 0
 }

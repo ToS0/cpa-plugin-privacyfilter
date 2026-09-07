@@ -179,3 +179,52 @@ func TestParseTermsFile_ByteOrderMark(t *testing.T) {
 		t.Fatalf("parseTermsFile =\n%+v\nwant\n%+v", got, want)
 	}
 }
+
+// A wrong kind in the term file is reported with the line the user has to
+// edit and the vocabulary that is accepted, and a value that carries a
+// character with a meaning in a command line or a configuration file is
+// counted for the warning at registration.
+func TestTermsFile_KindReportNamesTheLine(t *testing.T) {
+	dir := t.TempDir()
+	termsPath := filepath.Join(dir, "terms.txt")
+	if err := os.WriteFile(termsPath, []byte("# hosts\n\np14 host\nnuc hostname\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "s.secret"), []byte(strings.Repeat("ab", 32)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfgYAML := "mode: pseudonymize\nsalt_secret_path: " + filepath.Join(dir, "s.secret") + "\nterms_file: " + termsPath + "\n"
+	_, err := buildPlugin([]byte(cfgYAML), dir, nil)
+	if err == nil {
+		t.Fatal("a wrong kind was accepted")
+	}
+	for _, want := range []string{"line 4", `"hostname"`, "host, domain", "path_segment"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not carry %q", err, want)
+		}
+	}
+}
+
+func TestTermsFile_UnsafeValuesAreCounted(t *testing.T) {
+	unsafe := []string{
+		"Meier & Sohn", "Kunden/Meier", "q3%2026", "Projekt#42", "Sean O'Connor",
+		"a;b", "a|b", "a`b", "a$b", "a<b", "a>b", `a"b`, "a" + string(rune(92)) + "b",
+		"a\tb", "a\nb", "a\rb", "a" + string(rune(27)) + "b",
+	}
+	safe := []string{"zeus.lan", "Meier GmbH", "kunde-x", "Müller Söhne", "a.b*c", "kunde(x)"}
+	var entries []TermEntry
+	for _, v := range unsafe {
+		entries = append(entries, TermEntry{Value: v, Kind: "path_segment"})
+	}
+	for _, v := range safe {
+		entries = append(entries, TermEntry{Value: v, Kind: "path_segment"})
+	}
+	// The slash of a network is the one it is meant to have; a regular
+	// expression is not judged at all.
+	entries = append(entries,
+		TermEntry{Value: "10.13.0.0/16", Kind: "cidr"},
+		TermEntry{Regex: `kunde/[0-9]+;`, Kind: "path_segment"})
+	if n := countUnsafeTerms(entries); n != len(unsafe) {
+		t.Errorf("countUnsafeTerms = %d, want %d", n, len(unsafe))
+	}
+}

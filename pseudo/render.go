@@ -598,6 +598,12 @@ func buildCIDR(original string, digest []byte, addrFor func(detect.Kind, string)
 		addrPart, suffix = original[:i], original[i+1:]
 	}
 	if strings.ContainsRune(addrPart, '*') {
+		if strings.Count(addrPart, ".") != 3 {
+			// A wildcard that is no quad, "*/24" or "10.*/24", has no
+			// network shape to keep; the opaque token replaces it whole,
+			// suffix included, so the result is a shape IsPseudonym knows.
+			return SecretRenderer{}.Render(digest, original)
+		}
 		return buildWildcardQuad(addrPart, digest) + keptSuffix(suffix, 32)
 	}
 	src, err := netip.ParseAddr(addrPart)

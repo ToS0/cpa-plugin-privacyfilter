@@ -28,10 +28,14 @@ type Term struct {
 // decoding and passes the result here.
 type TermsConfig struct {
 	Terms []Term
-	// WordBoundary requires a literal hit to be delimited on both sides by a
-	// character that is neither a letter, a digit nor an underscore, or by the
-	// text boundary. Default true. It keeps "lan" from matching inside "plan"
-	// while still matching "athene.lan" inside "ssh athene.lan".
+	// WordBoundary requires a hit to be delimited on both sides by a
+	// character that is neither a letter nor a digit, or by the text
+	// boundary; the underscore is a boundary. It keeps "lan" from matching
+	// inside "plan" while still matching "athene.lan" inside "ssh athene.lan"
+	// and "nuc" inside "nuc_old". The rule holds for regular expressions as
+	// for literals: an expression that matches inside a longer token would
+	// leave a pseudonym the return path never resolves, because a pseudonym
+	// glued to a word is no pseudonym there. The plugin sets it.
 	WordBoundary bool
 }
 
@@ -53,7 +57,7 @@ func NewTerms(cfg TermsConfig) (Detector, error) {
 			return nil, fmt.Errorf("detect: term %d has both Value and Regex", i)
 		}
 		if !t.Kind.Valid() {
-			return nil, fmt.Errorf("detect: term %d has invalid kind %q", i, string(t.Kind))
+			return nil, fmt.Errorf("detect: term %d has invalid kind %q, want one of %s", i, string(t.Kind), KindNames())
 		}
 		if t.Regex != "" {
 			re, err := regexp.Compile(t.Regex)
@@ -130,15 +134,7 @@ func (d *termsDetector) Scan(text string) []Match {
 	}
 	for i, re := range d.regexps {
 		for _, loc := range re.FindAllStringIndex(text, -1) {
-			// The word boundary rule is a rule about literals; a regular
-			// expression states its own boundaries.
-			if !spanAligned(text, loc[0], loc[1]) {
-				continue
-			}
-			hits = append(hits, Match{
-				Start: loc[0], End: loc[1], Value: text[loc[0]:loc[1]],
-				Kind: d.regexKinds[i], Source: "terms",
-			})
+			add(loc[0], loc[1], d.regexKinds[i])
 		}
 	}
 	return Merge(hits)

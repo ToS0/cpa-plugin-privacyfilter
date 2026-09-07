@@ -146,33 +146,47 @@ func TestConfig_LoadSecretUnreadable(t *testing.T) {
 	}
 }
 
-// The mode of the file is not looked at. A secret every account on the
-// machine can read is loaded without a word, and it is the one value that
-// makes the pseudonyms of a whole conversation reversible.
-func TestConfig_LoadSecretIgnoresFileMode(t *testing.T) {
+// The mode of the file is looked at, and held like ssh holds a private key:
+// a secret every account on the machine can read is refused, because it is
+// the one value that makes the pseudonyms of a whole conversation reversible.
+func TestConfig_SecretFileMode(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, pseudo.DefaultSecretFile)
-	if err := os.WriteFile(path, secretOfLen(64), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
+	cases := []struct {
+		mode     os.FileMode
+		accepted bool
+	}{
+		{0o600, true},
+		{0o400, true},
+		{0o640, false},
+		{0o644, false},
+		{0o604, false},
 	}
-	if err := os.Chmod(path, 0o644); err != nil {
-		t.Fatalf("chmod: %v", err)
+	for i, c := range cases {
+		path := filepath.Join(dir, "m"+strconv.Itoa(i))
+		if err := os.WriteFile(path, secretOfLen(64), 0o600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		if err := os.Chmod(path, c.mode); err != nil {
+			t.Fatalf("chmod: %v", err)
+		}
+		_, err := pseudo.LoadSecret(path)
+		switch {
+		case c.accepted && err != nil:
+			t.Errorf("mode %04o: refused: %v", c.mode, err)
+		case !c.accepted && !errors.Is(err, pseudo.ErrSecretReadable):
+			t.Errorf("mode %04o: want ErrSecretReadable, got %v", c.mode, err)
+		case !c.accepted && !strings.Contains(err.Error(), "0600"):
+			t.Errorf("mode %04o: the report does not say what mode is wanted: %v", c.mode, err)
+		}
 	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("stat: %v", err)
-	}
-	if _, err := pseudo.LoadSecret(path); err != nil {
-		t.Fatalf("a world readable secret was refused: %v", err)
-	}
-	t.Logf("mode %v accepted without a word", info.Mode().Perm())
 }
 
-// MinSecretLen is a rule of the package that its own constructor does not
-// apply: a generator over an empty secret renders like any other. In service
-// the generator is only reached through LoadSecret, so the rule holds there;
-// it does not hold for a caller that goes around the loader.
-func TestConfig_NewGeneratorTakesAnySecret(t *testing.T) {
+// MinSecretLen is a rule of the package that its constructor does not
+// apply: a generator over an empty secret renders like any other, which the
+// tests of this module rely on. In service the generator is only reached
+// through LoadSecret, so the rule holds there, and a caller that takes a
+// secret from elsewhere has CheckSecret, which applies the same rule.
+func TestConfig_NewGeneratorSecretLength(t *testing.T) {
 	host := hostName(41)
 	for _, n := range []int{0, 1, 8, pseudo.MinSecretLen - 1} {
 		g := pseudo.NewGenerator(secretOfLen(n), []byte(lab.Salt), nil)
@@ -180,7 +194,12 @@ func TestConfig_NewGeneratorTakesAnySecret(t *testing.T) {
 		if p == "" || p == host {
 			t.Errorf("a secret of %d bytes produced %q", n, p)
 		}
-		t.Logf("secret of %d bytes: %q -> %q", n, host, p)
+		if err := pseudo.CheckSecret(secretOfLen(n)); !errors.Is(err, pseudo.ErrSecretTooShort) {
+			t.Errorf("CheckSecret over %d bytes = %v, want ErrSecretTooShort", n, err)
+		}
+	}
+	if err := pseudo.CheckSecret(append(secretOfLen(pseudo.MinSecretLen), '\n')); err != nil {
+		t.Errorf("CheckSecret refused a secret of the minimum length: %v", err)
 	}
 	first := pseudo.NewGenerator(nil, nil, nil).Pseudonym(detect.KindHost, host, 0)
 	second := pseudo.NewGenerator(nil, nil, nil).Pseudonym(detect.KindHost, host, 0)
@@ -226,10 +245,10 @@ func TestConfig_ResolveSecretPathDefaults(t *testing.T) {
 	}
 }
 
-// The comment promises an absolute path. Without a plugin directory the
-// result is a bare file name, and the plugin then reads the secret from
-// whatever directory the proxy happens to run in.
-func TestConfig_ResolveSecretPathWithoutPluginDir(t *testing.T) {
+// The result is only absolute when the plugin directory is. Without one the
+// resolver yields a bare file name, and LoadSecret refuses it, so the plugin
+// never reads the secret from whatever directory the proxy happens to run in.
+func TestConfig_SecretPathWithoutPluginDir(t *testing.T) {
 	got := pseudo.ResolveSecretPath("", "")
 	if filepath.IsAbs(got) {
 		t.Logf("resolved to an absolute path: %q", got)
@@ -238,24 +257,32 @@ func TestConfig_ResolveSecretPathWithoutPluginDir(t *testing.T) {
 	if got != pseudo.DefaultSecretFile {
 		t.Errorf("want the bare default name, got %q", got)
 	}
-	t.Logf("without a plugin directory the secret path is relative: %q", got)
-	t.Logf("relative for the value %q as well: %q", filepath.Join("etc", "own.dat"),
-		pseudo.ResolveSecretPath("", filepath.Join("etc", "own.dat")))
+	if _, err := pseudo.LoadSecret(got); !errors.Is(err, pseudo.ErrSecretPathRelative) {
+		t.Errorf("a relative secret path was not refused: %v", err)
+	}
+	rel := pseudo.ResolveSecretPath("", filepath.Join("etc", "own.dat"))
+	if _, err := pseudo.LoadSecret(rel); !errors.Is(err, pseudo.ErrSecretPathRelative) {
+		t.Errorf("a relative configured value without a plugin directory was not refused: %v", err)
+	}
 }
 
-// Two values that pass unexamined: one that climbs out of the plugin
-// directory and one that is only white space.
-func TestConfig_ResolveSecretPathUnexamined(t *testing.T) {
+// Two values that need care: one that climbs out of the plugin directory,
+// which is allowed and does what it says, and one that is only white space,
+// which is trimmed and then means the default.
+func TestConfig_SecretPathClimbingAndBlank(t *testing.T) {
 	dir := t.TempDir()
 	up := pseudo.ResolveSecretPath(dir, filepath.Join("..", "..", "elsewhere.dat"))
 	if strings.HasPrefix(up, dir) {
 		t.Errorf("the climbing value stayed inside the plugin directory: %q", up)
 	}
-	t.Logf("a climbing value resolves outside the plugin directory")
+	t.Logf("a climbing value resolves outside the plugin directory, as written")
 
 	blank := pseudo.ResolveSecretPath(dir, "   ")
-	if filepath.Base(blank) == pseudo.DefaultSecretFile {
-		t.Errorf("a blank value was treated as empty: %q", blank)
+	if blank != filepath.Join(dir, pseudo.DefaultSecretFile) {
+		t.Errorf("a blank value was not treated as empty: %q", blank)
 	}
-	t.Logf("a blank value resolves to the base name %q", filepath.Base(blank))
+	padded := pseudo.ResolveSecretPath(dir, " own.dat\t")
+	if padded != filepath.Join(dir, "own.dat") {
+		t.Errorf("white space around the value was kept: %q", padded)
+	}
 }

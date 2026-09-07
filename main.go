@@ -210,20 +210,39 @@ func (p *privacyFilterPlugin) initPseudonymize() error {
 	p.secret = secret
 
 	entries := p.cfg.Terms
+	for i, t := range entries {
+		if kind := detect.Kind(t.Kind); !kind.Valid() {
+			return fmt.Errorf("privacyfilter: terms[%d]: invalid kind %q, want one of %s", i, t.Kind, detect.KindNames())
+		}
+	}
 	if termsPath := resolveTermsFilePath(p.pluginDir, p.cfg.TermsFile); termsPath != "" {
-		fromFile, errFile := loadTermsFile(termsPath)
+		fromFile, lines, errFile := loadTermsFileLines(termsPath)
 		if errFile != nil {
 			return fmt.Errorf("privacyfilter: terms_file: %w", errFile)
 		}
 		for i, t := range fromFile {
 			if errEntry := t.validate(); errEntry != nil {
-				return fmt.Errorf("privacyfilter: terms_file %s entry %d: %w", termsPath, i+1, errEntry)
+				return fmt.Errorf("privacyfilter: terms_file %s line %d: %w", termsPath, lines[i], errEntry)
+			}
+			if kind := detect.Kind(t.Kind); !kind.Valid() {
+				return fmt.Errorf("privacyfilter: terms_file %s line %d: invalid kind %q, want one of %s", termsPath, lines[i], t.Kind, detect.KindNames())
 			}
 		}
 		entries = mergeTerms(entries, fromFile)
 		log.Infof("privacyfilter: %d terms loaded from %s, %d in total after merging", len(fromFile), termsPath, len(entries))
 	}
 	p.termCount = len(entries)
+	if n := countUnsafeTerms(entries); n > 0 {
+		// The value of a term is written back into every text the client
+		// goes on to run, parse or store. A quote, a shell metacharacter, a
+		// comment mark, a percent sign, a slash or a control character in it
+		// turns the line the model wrote into a different one for the shell,
+		// the crontab, the configuration file or the patch that receives it;
+		// see the package harm under internal/testlab. The plugin cannot know
+		// where a value will land, so it warns and leaves the decision to
+		// the list's owner. The values are not logged.
+		log.Warnf("privacyfilter: %d term(s) carry characters that change their meaning in a command line, a configuration file or a patch (quotes, shell metacharacters, #, %%, /, backslash, control characters); a restored value can then alter what the client runs or writes, see README, Known limits", n)
+	}
 
 	// A literal term that equals an entry of the built-in name list, or the
 	// given name of one, would be its own pseudonym and never be replaced.
@@ -270,9 +289,6 @@ func (p *privacyFilterPlugin) initPseudonymize() error {
 	terms := make([]detect.Term, 0, len(entries))
 	for i, t := range entries {
 		kind := detect.Kind(t.Kind)
-		if !kind.Valid() {
-			return fmt.Errorf("privacyfilter: terms[%d]: invalid kind %q", i, t.Kind)
-		}
 		if t.Value != "" {
 			p.termLiterals[t.Value] = true
 		}

@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/rheodev/cpa-plugin-privacyfilter/detect"
 )
 
 // The term file holds the maintained list outside config.yaml, one entry per
@@ -52,21 +54,78 @@ func resolveTermsFilePath(pluginDir, configured string) string {
 // pseudonymize mode refuses to start with half a list rather than silently
 // scanning with the other half.
 func loadTermsFile(path string) ([]TermEntry, error) {
+	entries, _, err := loadTermsFileLines(path)
+	return entries, err
+}
+
+// loadTermsFileLines is loadTermsFile with the line number of every entry,
+// so a report about an entry can point at the line the user has to edit.
+func loadTermsFileLines(path string) ([]TermEntry, []int, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer f.Close()
-	entries, err := parseTermsFile(f)
+	entries, lines, err := parseTermsFileLines(f)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return nil, nil, fmt.Errorf("%s: %w", path, err)
 	}
-	return entries, nil
+	return entries, lines, nil
+}
+
+// unsafeTermChars are the characters of a term value that are structure in
+// the places a restored value lands: the shell's quotes and metacharacters,
+// the comment marks of configuration files, the percent sign of crontab and
+// systemd, the path separator, the backslash of patterns and JSON, and the
+// control characters, above all the newline and the carriage return.
+const unsafeTermChars = "'\"`$;&|<>#%/\\\t\r\n"
+
+// termUnsafe reports whether a term value carries a character of
+// unsafeTermChars or any other control character. A regular expression is
+// not judged: its metacharacters are its own, and what it matches is decided
+// by the text. The slash of a network in CIDR form is the one it is meant to
+// have and does not count.
+func termUnsafe(t TermEntry) bool {
+	if t.Value == "" {
+		return false
+	}
+	chars := unsafeTermChars
+	if t.Kind == string(detect.KindCIDR) {
+		chars = strings.ReplaceAll(chars, "/", "")
+	}
+	if strings.ContainsAny(t.Value, chars) {
+		return true
+	}
+	for _, r := range t.Value {
+		if r < 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
+// countUnsafeTerms counts the entries termUnsafe accepts.
+func countUnsafeTerms(entries []TermEntry) int {
+	n := 0
+	for _, t := range entries {
+		if termUnsafe(t) {
+			n++
+		}
+	}
+	return n
 }
 
 // parseTermsFile parses the term file format described above.
 func parseTermsFile(r io.Reader) ([]TermEntry, error) {
+	entries, _, err := parseTermsFileLines(r)
+	return entries, err
+}
+
+// parseTermsFileLines is parseTermsFile with the line number of every
+// entry.
+func parseTermsFileLines(r io.Reader) ([]TermEntry, []int, error) {
 	var entries []TermEntry
+	var lines []int
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
 	lineNo := 0
@@ -87,14 +146,15 @@ func parseTermsFile(r io.Reader) ([]TermEntry, error) {
 		}
 		entry, err := parseTermsLine(line)
 		if err != nil {
-			return nil, fmt.Errorf("line %d: %w", lineNo, err)
+			return nil, nil, fmt.Errorf("line %d: %w", lineNo, err)
 		}
 		entries = append(entries, entry)
+		lines = append(lines, lineNo)
 	}
 	if err := sc.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return entries, nil
+	return entries, lines, nil
 }
 
 // stripTermsComment removes a comment from one line. A '#' opens a comment

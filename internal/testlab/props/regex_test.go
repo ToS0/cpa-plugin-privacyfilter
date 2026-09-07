@@ -3,11 +3,11 @@ package props
 // The boundary rules of the two directions. A literal of the maintained list
 // is only matched when it stands on its own, and the plugin wires the term
 // layer with WordBoundary set, so a literal is always delimited where it is
-// replaced. A regular expression states its own boundaries and is exempt from
-// that check by design; the return pass, however, restores a pseudonym only
-// where it stands on its own. The two rules do not have to meet, and where
-// they do not, the forward pass writes a pseudonym that the return pass will
-// not take back.
+// replaced. A regular expression once stated its own boundaries and was
+// exempt from that check, while the return pass restores a pseudonym only
+// where it stands on its own; where the two rules did not meet, the forward
+// pass wrote a pseudonym the return pass never took back. The rule now holds
+// for expressions as for literals.
 
 import (
 	"strings"
@@ -33,10 +33,11 @@ func regexRig(t *testing.T, expr string, kind detect.Kind) *rig {
 	}
 }
 
-// A regular expression term that matches inside a longer token leaves a
-// pseudonym behind that never comes back.
+// A regular expression term that would match inside a longer token is not
+// applied there: the word boundary rule of the list holds for expressions
+// as for literals, so the forward pass never writes a pseudonym the return
+// pass would refuse to take back.
 func TestProps_RegexTermInsideAToken(t *testing.T) {
-	skipOpenFinding(t)
 	cases := []struct {
 		name string
 		expr string
@@ -50,13 +51,10 @@ func TestProps_RegexTermInsideAToken(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			r := regexRig(t, c.expr, detect.KindPathSegment)
 			mid := r.forwardOnce(c.text)
-			if mid == c.text {
-				t.Fatalf("the regex did not match %q at all", c.text)
+			if mid != c.text {
+				t.Errorf("the regex matched inside the token %q and left %q", c.text, mid)
 			}
-			out := lab.Back(mid, r.tab)
-			if out != c.text {
-				t.Errorf("the pseudonym does not come back\n in:  %q\n mid: %q\n out: %q", c.text, mid, out)
-			}
+			checkRoundTrip(t, r, c.text, mid)
 		})
 	}
 }
@@ -87,7 +85,6 @@ func TestProps_RegexTermDelimitedRoundTrips(t *testing.T) {
 // The property behind the two probes: for every regular expression the fuzzer
 // writes and every text it runs it over, the circle has to close.
 func FuzzPropsRoundTripRegexTerm(f *testing.F) {
-	skipOpenFinding(f)
 	f.Add(`kunde-[0-9]+`, "kunde-42 und kunde-42x")
 	f.Add(`[a-z]+\.home\.lan`, "ssh knoten.home.lan")
 	f.Add(`A-[0-9]{4}`, "grep A-1234 log")

@@ -322,18 +322,16 @@ func TestRestorer_Holdback(t *testing.T) {
 		"foo " + p:               len(p), // complete, but the next byte may glue it to a word
 		"foo " + p + " ":         0,      // the space decided it
 		"foo " + p + " " + p[:3]: 3,
-		"foo " + p + p[:3]:       0, // continues the word in front: never restored, so not held
+		"foo " + p + p[:3]:       len(p) + 3, // may become two pseudonyms back to back, which restore as a run
+		"foo " + p + "hx":        0,          // continues the word in front and begins no pseudonym
 		"Müller " + p[:2]:        2,
 		"x hos":                  3,
-		"xhos":                   0, // same reason
+		"xhos":                   0, // continues the word in front: never restored, so not held
 		"x ho" + "ü":             0, // the ü is not a prefix; nothing held back mid-rune
 	}
 	for text, want := range cases {
 		if got := r.Holdback(text); got != want {
 			t.Errorf("Holdback(%q) = %d, want %d", text, got, want)
-		}
-		if got := r.Holdback(text); got > tb.MaxPseudonymLen() {
-			t.Errorf("Holdback(%q) = %d exceeds MaxPseudonymLen", text, got)
 		}
 	}
 	if mapping.NewRestorer(mapping.NewTable(fakeGen{})).Holdback("anything") != 0 {

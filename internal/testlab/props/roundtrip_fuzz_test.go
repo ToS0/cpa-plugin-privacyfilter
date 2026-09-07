@@ -35,7 +35,6 @@ func FuzzPropsRoundTripTerms(f *testing.F) {
 
 // The structural layer alone, under the same three assertions.
 func FuzzPropsRoundTripPatterns(f *testing.F) {
-	skipOpenFinding(f)
 	for _, seed := range textSeeds() {
 		f.Add(seed)
 	}
@@ -86,7 +85,6 @@ func literalKinds() []detect.Kind {
 // asserted. A short or odd literal may well match inside its own pseudonym on
 // a second pass, which says something about the list, not about the circle.
 func FuzzPropsRoundTripAnyTerm(f *testing.F) {
-	skipOpenFinding(f)
 	f.Add(termHost, uint8(0), false, "ssh "+termHost)
 	f.Add(termSegment, uint8(2), false, "/mnt/"+termSegment+"/berichte")
 	f.Add("Straßburger", uint8(4), true, "STRASSBURGER und straßburger")

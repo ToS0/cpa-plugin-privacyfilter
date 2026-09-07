@@ -17,6 +17,7 @@ package detect
 import (
 	"errors"
 	"sort"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 )
@@ -57,6 +58,26 @@ const (
 	// renderer; it is rendered as an opaque token nobody computes with.
 	KindSecret Kind = "secret"
 )
+
+// Kinds lists the declared kinds in the order of their declaration, for
+// error messages and documentation.
+func Kinds() []Kind {
+	return []Kind{
+		KindIPv4, KindIPv6, KindCIDR, KindMAC, KindEmail, KindHost, KindDomain,
+		KindPathSegment, KindFileName, KindPerson, KindIBAN, KindURL,
+		KindUUID, KindHexID, KindFingerprint, KindSerial, KindSecret,
+	}
+}
+
+// KindNames returns the declared kinds as one comma-separated string.
+func KindNames() string {
+	kinds := Kinds()
+	names := make([]string, len(kinds))
+	for i, k := range kinds {
+		names[i] = string(k)
+	}
+	return strings.Join(names, ", ")
+}
 
 // Valid reports whether k is one of the declared kinds.
 func (k Kind) Valid() bool {

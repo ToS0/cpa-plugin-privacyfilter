@@ -6,7 +6,8 @@ package props
 // forward pass writes two pseudonyms into that gap, and they do have letters
 // and digits at their edges, so the second one continues the first as one
 // token. The return pass restores a pseudonym only where it stands on its
-// own, and refuses.
+// own, and refused such a run; it now takes a pseudonym that directly
+// follows another as the plugin's own output and restores the run whole.
 //
 // The fuzzer found the shape in FuzzPropsRoundTripAnyTerm; the corpus entry
 // under testdata holds its own counterexample. This file is the readable one.
@@ -23,7 +24,6 @@ import (
 // Two codes in brackets, written back to back the way a table cell or a log
 // line does.
 func TestProps_TouchingTermsGlueTheirPseudonyms(t *testing.T) {
-	skipOpenFinding(t)
 	terms := []detect.Term{
 		{Value: "[K1]", Kind: detect.KindPathSegment},
 		{Value: "[K2]", Kind: detect.KindPathSegment},
