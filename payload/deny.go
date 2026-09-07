@@ -201,6 +201,22 @@ func (d *DenyList) Denied(path Path, enclosingTypes []string) bool {
 	return false
 }
 
+// VisitsKeys reports whether the object key of the member at path is offered
+// to the visitor as text. Everywhere in the Anthropic schema a key is a word
+// of the schema and is left alone; below the input of a tool block the keys
+// are the tool's own, and there a key is as often a name as a value is: a
+// map of hosts to their state, of files to their content, of containers to
+// their networks. Such a key leaves in clear when it is not visited, and a
+// pseudonym the model writes as a key is never resolved. The key is offered
+// under the path of its member, which is what the deny list and the visitor
+// see for the value as well.
+func (d *DenyList) VisitsKeys(path Path, enclosingTypes []string) bool {
+	if d == nil || len(path) == 0 {
+		return false
+	}
+	return insideToolInput(path, enclosingTypes, d.ToolNameParents)
+}
+
 // matchesTail reports whether the dotted rule matches the tail of parts, one
 // element per dot-separated piece. No piece may span a dot of the path, which
 // is what tells the two elements of Path{"metadata","user_id"} from the

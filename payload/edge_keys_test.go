@@ -16,12 +16,11 @@ import (
 )
 
 // The same key twice in one object. JSON leaves the case to the
-// implementation, and the two directions of the plugin resolve it
-// differently: the forward path decodes into a map, where the last pair
-// wins and the first is gone before any visitor sees it; the return path
-// walks the bytes and finds both.
+// implementation; both directions of the plugin walk the bytes, see both
+// pairs and keep both. Before the forward path shared the scanner it decoded
+// into a map, where the last pair won and the first was gone before any
+// visitor saw it.
 func TestJSONEdge_DuplicateKeyInOneObject(t *testing.T) {
-	skipOpenFinding(t)
 	// The value to protect sits in the first of the two pairs.
 	first := fmt.Sprintf(`{"k":%q,"k":"harmless"}`, needle)
 	out, changed, err := outbound(first)
@@ -33,8 +32,8 @@ func TestJSONEdge_DuplicateKeyInOneObject(t *testing.T) {
 		t.Errorf("the forward path never saw the first of two pairs and sent it on unchanged: %s", out)
 	}
 
-	// The value sits in the second pair, so the walk does replace it - and
-	// drops the first pair while writing the body back.
+	// The value sits in the second pair; the walk replaces it and keeps the
+	// first pair while writing the body back.
 	second := fmt.Sprintf(`{"k":"harmless","k":%q}`, needle)
 	out, changed, err = outbound(second)
 	if err != nil {
@@ -57,12 +56,11 @@ func TestJSONEdge_DuplicateKeyInOneObject(t *testing.T) {
 }
 
 // The deny list decides by the "type" of the enclosing object. When "type"
-// appears twice, the forward path reads the last one and the return path the
-// first, so the same body is filtered differently in the two directions.
+// appears twice, both directions read the first one, so the same body is
+// filtered the same way on the way out and on the way back.
 func TestJSONEdge_DuplicateTypeKeyDecidesTheDenyList(t *testing.T) {
-	skipOpenFinding(t)
-	// A block that opens as text and closes as thinking. The forward walk
-	// sees "thinking", denies the whole object and lets the text out.
+	// A block that opens as text and closes as thinking. The first type
+	// decides: the block is text, and the text is replaced.
 	body := fmt.Sprintf(`{"type":"text","text":%q,"type":"thinking"}`, needle)
 	out, changed, err := outbound(body)
 	if err != nil {
@@ -73,8 +71,8 @@ func TestJSONEdge_DuplicateTypeKeyDecidesTheDenyList(t *testing.T) {
 		t.Errorf("a second type key turned the block into a thinking block and the text left in clear: %s", out)
 	}
 
-	// The other way round, and now the two directions disagree: the forward
-	// walk replaces, the return path denies.
+	// The other way round: the block opens as thinking, and both directions
+	// deny it.
 	body = fmt.Sprintf(`{"type":"thinking","text":%q,"type":"text"}`, needle)
 	fwd, _, err := outbound(body)
 	if err != nil {
@@ -86,10 +84,8 @@ func TestJSONEdge_DuplicateTypeKeyDecidesTheDenyList(t *testing.T) {
 	}
 	t.Logf("thinking then text: forward=%s", fwd)
 	t.Logf("thinking then text: return=%s replaced=%d", ret, n)
-	if leaked(fwd) == leaked(ret) {
-		t.Logf("both directions agree on this body")
-	} else {
-		t.Logf("the two directions disagree: the forward walk reads the last type, the byte scanner the first")
+	if leaked(fwd) != leaked(ret) {
+		t.Errorf("the two directions disagree on a body with two type keys")
 	}
 }
 
@@ -168,12 +164,11 @@ func TestJSONEdge_WideObject(t *testing.T) {
 	t.Logf("width=%d hits=%d body=%d bytes forward=%d bytes", width, hits, len(body), len(fwd))
 }
 
-// The place a key holds text is a place the filter never looks: neither
-// direction offers an object key to the visitor. On the way out the name of
-// a key leaves in clear, on the way back a pseudonym the model wrote as a
-// key is never resolved.
+// Below the input of a tool block a key holds text like a value, and both
+// directions offer it to the visitor: on the way out the name of a key is
+// replaced, on the way back a pseudonym the model wrote as a key is
+// resolved. Everywhere else a key is a word of the schema and is left alone.
 func TestJSONEdge_ObjectKeysAreNeverVisited(t *testing.T) {
-	skipOpenFinding(t)
 	// A map keyed by host or address is an everyday shape: a rendered
 	// inventory, the networks of a container, a table of hosts.
 	body := fmt.Sprintf(`{"messages":[{"role":"user","content":[{"type":"tool_use",`+
@@ -192,8 +187,8 @@ func TestJSONEdge_ObjectKeysAreNeverVisited(t *testing.T) {
 	}
 
 	// The same in the other direction: the model answers with the pseudonym
-	// as a key, and the return path leaves it standing, so the tool is
-	// called with a name that does not exist on this machine.
+	// as a key, and the return path resolves it, so the tool is called with
+	// the name that exists on this machine.
 	answer := fmt.Sprintf(`{"content":[{"type":"tool_use","id":"toolu_02","name":"read",`+
 		`"input":{"files":{%q:"content"},"path":%q}}]}`, mask, mask)
 	back, n, err := payload.ReplaceStrings([]byte(answer), payload.DefaultDeny(), show)

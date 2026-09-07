@@ -44,10 +44,10 @@ func TestWalk_ReserializationIsDeterministic(t *testing.T) {
 	}
 }
 
-// Bytes after the closing brace: the walk accepts them when nothing changes.
-// The question is what happens to them once something does change.
+// Bytes after the closing brace: white space is kept whether or not
+// something changes, anything else is not a JSON document and is refused
+// before the visitor runs.
 func TestWalk_TrailingBytesAfterObject(t *testing.T) {
-	skipOpenFinding(t)
 	cases := []string{
 		`{"a":"zeus.lan"}trailing`,
 		`{"a":"zeus.lan"} `,

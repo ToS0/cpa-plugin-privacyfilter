@@ -271,9 +271,10 @@ func objectType(b []byte, i int) string {
 }
 
 // stringScanner walks valid JSON bytes and reports every string value the
-// deny list does not cover, with the byte range of its encoded form. It is
-// the byte-level counterpart of walker: same paths, same type stack, same
-// deny rules, but nothing is decoded or allocated except the object keys.
+// deny list does not cover, and every object key the deny list says is text,
+// with the byte range of its encoded form. Both directions of the plugin
+// run over it, so a body is filtered the same way on the way out and on the
+// way back. Nothing is decoded or allocated except the object keys.
 type stringScanner struct {
 	b     []byte
 	deny  *DenyList
@@ -311,12 +312,13 @@ func (s *stringScanner) object(i int) (int, error) {
 
 	i = skipWS(s.b, i+1)
 	for i < len(s.b) && s.b[i] != '}' {
+		keyStart := i
 		keyEnd, err := skipValue(s.b, i)
 		if err != nil {
 			return 0, err
 		}
-		var key string
-		if err := json.Unmarshal(s.b[i:keyEnd], &key); err != nil {
+		key, err := decodeString(s.b[keyStart:keyEnd])
+		if err != nil {
 			return 0, err
 		}
 		i = skipWS(s.b, keyEnd)
@@ -328,6 +330,14 @@ func (s *stringScanner) object(i int) (int, error) {
 			return 0, errPathNotFound
 		}
 		s.path = append(s.path, key)
+		if s.deny.VisitsKeys(s.path, s.types) {
+			// The key is text of the tool's own and is offered under the
+			// path of its member, ahead of the value, so the edits stay in
+			// document order.
+			if err := s.visit(s.path, keyStart, keyEnd); err != nil {
+				return 0, err
+			}
+		}
 		i, err = s.value(i)
 		s.path = s.path[:len(s.path)-1]
 		if err != nil {
@@ -365,10 +375,10 @@ func (s *stringScanner) array(i int) (int, error) {
 }
 
 // scanStrings calls visit for every string value of the JSON object body
-// that deny does not cover, in document order. body must already be valid
-// JSON; the scanner does not validate, it only follows the structure. The
-// path handed to visit is reused between calls and must be copied to be
-// kept.
+// that deny does not cover, and for every object key deny reports as text,
+// in document order. body must already be valid JSON; the scanner does not
+// validate, it only follows the structure. The path handed to visit is
+// reused between calls and must be copied to be kept.
 func scanStrings(body []byte, deny *DenyList, visit func(path Path, start, end int) error) error {
 	i := skipWS(body, 0)
 	if i >= len(body) || body[i] != '{' {
@@ -377,6 +387,39 @@ func scanStrings(body []byte, deny *DenyList, visit func(path Path, start, end i
 	s := &stringScanner{b: body, deny: deny, visit: visit}
 	_, err := s.value(i)
 	return err
+}
+
+// rewrite is the one pass both directions share: it scans the valid JSON
+// object body, decodes every string scanStrings reports, asks fn for a
+// replacement and splices the encoded replacements into the body. It
+// returns body itself and 0 when nothing changed. A key that changes is
+// re-encoded like a value; two members whose keys fall onto the same
+// replacement stay two members, as a duplicate key does.
+func rewrite(body []byte, deny *DenyList, fn func(Path, string) (string, bool)) (out []byte, replaced int, err error) {
+	var edits []stringEdit
+	errScan := scanStrings(body, deny, func(path Path, start, end int) error {
+		value, errDec := decodeString(body[start:end])
+		if errDec != nil {
+			return errDec
+		}
+		repl, ok := fn(path, value)
+		if !ok {
+			return nil
+		}
+		edits = append(edits, stringEdit{start: start, end: end, enc: encodeString(repl)})
+		return nil
+	})
+	if errScan != nil {
+		return nil, 0, errScan
+	}
+	if len(edits) == 0 {
+		return body, 0, nil
+	}
+	out, err = splice(body, edits)
+	if err != nil {
+		return nil, 0, err
+	}
+	return out, len(edits), nil
 }
 
 // stringEdit is one replacement of an encoded string value in a body.

@@ -284,19 +284,21 @@ func SyntheticDelta(index int, deltaType, text string) []byte {
 }
 
 // ReplaceStrings is the return-path counterpart of Walk: it visits every
-// string value of the JSON object body that deny does not cover, in document
-// order, and rewrites those for which fn returns true. deny nil means
-// DefaultDeny, the same list the forward pass applies, so what was never
-// pseudonymized on the way out, thinking blocks above all, is never touched
-// on the way back, and a field the list does not name is handled by the
-// list alone, not by a second enumeration here.
+// string value of the JSON object body that deny does not cover, and every
+// object key below the input of a tool block, in document order, and
+// rewrites those for which fn returns true. deny nil means DefaultDeny, the
+// same list the forward pass applies, so what was never pseudonymized on the
+// way out, thinking blocks above all, is never touched on the way back, and
+// a field the list does not name is handled by the list alone, not by a
+// second enumeration here.
 //
-// Unlike Walk the body is not re-serialized: only the replaced values
-// change, every other byte survives as it was, so key order, whitespace and
-// number formatting of the upstream response are preserved and a duplicate
-// key is rewritten in both places. The body is read once. When no value
-// changed, body itself is returned and replaced is 0. A body that is not a
-// JSON object is ErrNotJSON.
+// The body is not re-serialized: only the replaced strings change, every
+// other byte survives as it was, so key order, whitespace and number
+// formatting of the upstream response are preserved and a duplicate key is
+// rewritten in both places. The body is read once. When no value changed,
+// body itself is returned and replaced is 0. A body that is not a JSON
+// object is ErrNotJSON. Walk runs the same pass with the forward path's
+// limit; the two differ in nothing else.
 func ReplaceStrings(body []byte, deny *DenyList, fn func(Path, string) (string, bool)) (out []byte, replaced int, err error) {
 	if !json.Valid(body) {
 		return nil, 0, ErrNotJSON
@@ -304,28 +306,5 @@ func ReplaceStrings(body []byte, deny *DenyList, fn func(Path, string) (string, 
 	if deny == nil {
 		deny = DefaultDeny()
 	}
-	var edits []stringEdit
-	errScan := scanStrings(body, deny, func(path Path, start, end int) error {
-		value, errDec := decodeString(body[start:end])
-		if errDec != nil {
-			return errDec
-		}
-		repl, ok := fn(path, value)
-		if !ok {
-			return nil
-		}
-		edits = append(edits, stringEdit{start: start, end: end, enc: encodeString(repl)})
-		return nil
-	})
-	if errScan != nil {
-		return nil, 0, errScan
-	}
-	if len(edits) == 0 {
-		return body, 0, nil
-	}
-	out, err = splice(body, edits)
-	if err != nil {
-		return nil, 0, err
-	}
-	return out, len(edits), nil
+	return rewrite(body, deny, fn)
 }

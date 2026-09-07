@@ -146,12 +146,13 @@ func keysOf(m map[string]any) []string {
 }
 
 // An object made of nothing but denied keys is invisible to the filter. That
-// is right where the keys mean what the schema says; it is a hole where the
-// same names appear as the arguments of a tool, which is arbitrary JSON that
-// the model fills in.
+// is right where the keys mean what the schema says; the same names as the
+// arguments of a tool are arbitrary JSON the model fills in, and there the
+// deny list does not apply: every argument is visited, its key included.
+// "signature" is not in the list here because it is bound to the thinking
+// block, not to the key name; elsewhere it is ordinary text.
 func TestJSONEdge_ObjectOfOnlyDeniedKeys(t *testing.T) {
-	skipOpenFinding(t)
-	denied := []string{"model", "role", "type", "id", "tool_use_id", "signature",
+	denied := []string{"model", "role", "type", "id", "tool_use_id",
 		"stop_reason", "stop_sequence", "media_type", "cache_control"}
 
 	var b strings.Builder
@@ -196,9 +197,12 @@ func TestJSONEdge_ObjectOfOnlyDeniedKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("visitedOut: %v", err)
 	}
-	t.Logf("of %d tool arguments the walk offered %d: %q", len(denied)+1, len(paths), paths)
+	t.Logf("of %d tool arguments the walk offered %d strings, keys and values: %q", len(denied)+1, len(paths), paths)
 	if n := bytes.Count(fwd, []byte(needle)); n > 0 {
 		t.Errorf("%d tool arguments kept their clear text because their key is denied: %s", n, fwd)
+	}
+	if len(paths) != 2*(len(denied)+1) {
+		t.Errorf("want every argument offered twice, as key and as value, got %d offers", len(paths))
 	}
 }
 

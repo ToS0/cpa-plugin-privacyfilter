@@ -34,9 +34,9 @@ func TestReplaceStrings_TrailingWhitespace(t *testing.T) {
 }
 
 // A lone surrogate survives in JSON but has no UTF-8 encoding. Go's encoder
-// turns it into the replacement character, which silently rewrites the text.
+// turns it into the replacement character; the walk keeps the bytes of every
+// string that does not change, so the surrogate stays as it came.
 func TestWalk_LoneSurrogate(t *testing.T) {
-	skipOpenFinding(t)
 	body := `{"keep":"\ud800","hit":"zeus.lan"}`
 	out, changed, err := payload.Walk([]byte(body), payload.WalkOptions{}, replaceHost)
 	if err != nil {
