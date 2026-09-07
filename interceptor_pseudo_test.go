@@ -794,3 +794,34 @@ func TestPseudonymizeRequest_PatternToggleReachesEveryLayer(t *testing.T) {
 		t.Errorf("e-mail should be replaced with email on, body: %s", out)
 	}
 }
+
+// The host passes the plugin directory as it stands in its configuration,
+// relative to the proxy's working directory. The secret is looked up there,
+// and the plugin makes the directory absolute before it does, so the
+// refusal of a relative secret path does not fire on the host's own value.
+func TestBuildPlugin_RelativePluginDirFromTheHost(t *testing.T) {
+	root := t.TempDir()
+	rel := filepath.Join("plugins", "linux", "amd64")
+	dir := filepath.Join(root, rel)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	secret := append(append([]byte{}, fixtures.Secret...), '\n')
+	if err := os.WriteFile(filepath.Join(dir, pseudo.DefaultSecretFile), secret, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+
+	raw := []byte("mode: pseudonymize\nterms:\n  - {value: zeus.lan, kind: host}\n")
+	plug, err := buildPlugin(raw, rel, nil)
+	if err != nil {
+		t.Fatalf("buildPlugin with the host's relative directory: %v", err)
+	}
+	p, ok := plug.Capabilities.RequestInterceptor.(*privacyFilterPlugin)
+	if !ok || p == nil {
+		t.Fatal("no interceptor returned")
+	}
+	if !filepath.IsAbs(p.pluginDir) {
+		t.Errorf("plugin directory stayed relative: %q", p.pluginDir)
+	}
+}

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/netip"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -56,6 +57,18 @@ func buildPlugin(configYAML []byte, pluginDir string, rt *runtimeState) (plugina
 	}
 	if pluginDir == "" {
 		pluginDir = inferPluginDir()
+	}
+	// The host names the plugin directory as it stands in its own
+	// configuration, "plugins/linux/amd64" relative to its working
+	// directory. Every file the plugin resolves against it, the secret above
+	// all, must be found from there and nowhere else, so the directory is
+	// made absolute once, here, before anything is resolved against it.
+	if pluginDir != "" && !filepath.IsAbs(pluginDir) {
+		abs, errAbs := filepath.Abs(pluginDir)
+		if errAbs != nil {
+			return pluginapi.Plugin{}, fmt.Errorf("privacyfilter: plugin directory %q: %w", pluginDir, errAbs)
+		}
+		pluginDir = abs
 	}
 	if rt == nil {
 		rt = newRuntimeState()
