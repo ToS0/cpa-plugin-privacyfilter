@@ -24,7 +24,7 @@ Ein Wert, auf den es ankommt, wird zur Laufzeit aus Zahlen zusammengesetzt und n
 
 Zwei Bereiche liegen außerhalb dieses Verzeichnisses, weil sie zu dem Paket gehören, das sie messen: die Proben der JSON-Ebene stehen neben `payload` in `deny_test.go`, `walk_test.go`, `json_edge_test.go` und den vier `edge_*`-Dateien, die des Streams im Wurzelpaket in `stream_sequence_test.go`, `stream_blocks_test.go`, `stream_abort_test.go` samt Fixture und Adapter.
 
-Ausführen mit `go test ./...`, gern mit `-race`. Dann aber `-short` dazu: `TestLargeBody` in `internal/leaktest` schiebt einen Body von etwa 31 MiB durch den ganzen Hinweg, und unter dem Race-Detektor sprengt das die Zehn-Minuten-Frist, die `go test` voreingestellt hat. Wer den großen Body auch unter dem Detektor sehen will, gibt ihm mit `-timeout 45m` genug Zeit. Ein Fuzz-Lauf über das Erwartete hinaus geht mit `-run Fuzz -fuzz FuzzPropsPseudonymShape -fuzztime 60s` auf das Paket `props`.
+Ausführen mit `go test ./...`, gern mit `-race`. Dann aber `-short` dazu: `TestLargeBody` in `internal/leaktest` schiebt einen Body von etwa 31 MiB durch den ganzen Hinweg und braucht unter dem Race-Detektor allein 568 Sekunden, sodass das Paket die Zehn-Minuten-Frist überläuft, die `go test` voreingestellt hat. Ein Fehler ist das nicht: mit `-timeout 45m` läuft der Test durch, und kein einziges Datenrennen wird gemeldet. Ein Fuzz-Lauf über das Erwartete hinaus geht mit `-run Fuzz -fuzz FuzzPropsPseudonymShape -fuzztime 60s` auf das Paket `props`.
 
 
 ---
