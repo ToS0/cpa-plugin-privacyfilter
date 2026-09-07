@@ -1,10 +1,16 @@
-# Befunde aus dem externen Testlabor
+# Befunde aus dem Testlabor
 
-Neunzehn Befunde aus 227 Proben gegen den Stand vom 7. September, elf davon mit Leckwirkung, zwei mit Wirkung auf die Kommandozeile und einer, der sich selbst nährt. Die Tests liegen bewusst außerhalb des Klons, in `testlab/` neben dem Repository, damit die laufende Arbeit im Repo nichts abbekommt: ein eigenes Go-Modul mit `replace` auf den Klon, das `detect`, `pseudo`, `mapping` und `payload` von außen anspricht. `internal/*` bleibt von dort unerreichbar, `stream.go` und der Interceptor ebenfalls, weil sie `package main` sind; der Rückhalt des Streams wurde deshalb über `mapping.Restorer` nachgebildet, und der Nachbau entspricht Zeile für Zeile dem, was `stream.go` tut.
+Von neunzehn Befunden sind fünf behoben und einer zur Hälfte; dreizehn stehen offen. Fünf davon lassen Daten hinaus, zwei können eine Kommandozeile verfälschen, vier verlieren Text im Stream, einer ersetzt mehr als er soll, und einer nährt sich selbst. Behoben sind die sieben Kuren von je einer Zeile, die dieses Kapitel am 7. September vorschlug: der Lader schneidet einen Wert nicht mehr am Doppelkreuz ab und wirft ein vorangestelltes Byte Order Mark weg, `signature` hängt am Blocktyp statt am Schlüsselnamen, ein gepunkteter Sperreintrag wird elementweise verglichen, unterhalb der Argumente eines Werkzeugaufrufs gilt keine Regel der Sperrliste mehr, die Felder, die der Anbieter wörtlich braucht, stehen in ihr, und ein Dateiname behält seine Endung nur, wenn sie wie eine aussieht. Die Kapitel dazu sind stehen geblieben und tragen jetzt den Vermerk, womit sie behoben wurden; die offenen tragen wie zuvor ihren roten Test und einen Vorschlag, wie zu kurieren wäre. Sie sind die Arbeit, die bleibt. Jedes dieser Kapitel nennt Ursache, Fundort, Reproduktion und Vorschlag genau genug, dass eine andere Sitzung sie der Reihe nach abarbeiten kann, ohne diese hier gelesen zu haben; die Reihenfolge steht im nächsten Kapitel.
 
-Ausführen mit `cd testlab && go test -race ./...`. Einundvierzig Tests sind rot, und sie sollen rot bleiben, bis die Befunde behoben sind. Die übrigen 186 decken Round-Trip, Tokengrenzen, Idempotenz in beide Richtungen, überlappende Terme, Regex-Metazeichen als Literale, die Zahlenschreibweise, die Verschachtelungstiefe bis 5000 Ebenen, den SSE-Parser mit CRLF und ohne Leerzeichen nach `data:`, die doppelte Kodierung in `partial_json` mit Anführungszeichen, Backslash und Emoji sowie Bodies mit umgebendem Leerraum ab. Dazu die Formen des Systembetriebs: derselbe Rechnername in dreizehn Befehlszeilen, Adressen mit Port, Präfixlänge und IPv6-Klammern, Konfigurationszeilen in YAML, INI, JSON, systemd und `/etc/hosts`. Dazu der Alltag einer Sitzung: ein Patch, der hinterher noch passt, ein Fragment als `old_string`, Compilermeldungen mit Zeile und Spalte, und die Frage, was von einem Ersatzwert übrig bleibt, wenn das Modell ihn nicht wörtlich wiederholt. Dazu die Sperrliste an einem Body in der Gestalt des echten, sechzehn Schreibweisen eines Pfades, der Namensraum unter Kollisionsdruck und die Ableitung des Salts. Und schließlich Nebenläufigkeit und Maßstab. Der Fehler, der neue Dateien unter einem Ersatznamen anlegte, ist am laufenden System bestätigt behoben.
+Die Tests liegen im Repository. `internal/testlab/` trägt sie in fünf Paketen — `basics`, `layers`, `harm`, `props`, `config` — samt dem gemeinsamen Helfer `lab`; die Proben der JSON-Ebene stehen neben `payload`, die des Streams im Wurzelpaket neben `stream.go`. Gegen dieses laufen sie jetzt wirklich: der Nachbau, den das Labor brauchte, solange es ein eigenes Modul neben dem Klon war, ist weg, und siebzehn der neunzehn Stream-Proben halten gegen das Original genau so wie gegen den Nachbau.
 
-Eine Warnung zur Arbeitsweise in diesem Verzeichnis: jede Testdatei läuft auf ihrem Weg auf die Platte selbst durch den Filter. Eine Adresse, die als Literal im Quelltext steht, kann dort als etwas anderes ankommen, und aus einer Ausgabe kopierte Werte sind Ersatzwerte, keine Beispiele. Werte, auf die es ankommt, deshalb zur Laufzeit aus Zahlen zusammensetzen, wie es `ranges_test.go` tut; nur so ist die Probe das, was sie zu sein vorgibt.
+Ausführen mit `go test ./...`; die Suite ist grün. Die vierunddreißig Tests, die einen offenen Befund festhalten, überspringen sich selbst und sagen es. Wer sie fallen sehen will, setzt eine Umgebungsvariable:
+
+	PRIVACYFILTER_OPEN_FINDINGS=1 go test ./...
+
+Wer einen Befund kuriert, streicht in seinem Test den Aufruf von `skipOpenFinding` und sieht ihn grün werden. Von den 413 Testfunktionen des Moduls decken die übrigen Round-Trip, Tokengrenzen, Idempotenz in beide Richtungen, überlappende Terme, Regex-Metazeichen als Literale, die Zahlenschreibweise, die Verschachtelungstiefe bis 5000 Ebenen, den SSE-Parser mit CRLF und ohne Leerzeichen nach `data:`, die doppelte Kodierung in `partial_json` mit Anführungszeichen, Backslash und Emoji sowie Bodies mit umgebendem Leerraum ab. Dazu die Formen des Systembetriebs: derselbe Rechnername in dreizehn Befehlszeilen, Adressen mit Port, Präfixlänge und IPv6-Klammern, Konfigurationszeilen in YAML, INI, JSON, systemd und `/etc/hosts`. Dazu der Alltag einer Sitzung: ein Patch, der hinterher noch passt, ein Fragment als `old_string`, Compilermeldungen mit Zeile und Spalte, und die Frage, was von einem Ersatzwert übrig bleibt, wenn das Modell ihn nicht wörtlich wiederholt. Dazu die Sperrliste an einem Body in der Gestalt des echten, sechzehn Schreibweisen eines Pfades, der Namensraum unter Kollisionsdruck und die Ableitung des Salts. Und schließlich zehn Fuzz-Ziele mit Korpus, Nebenläufigkeit und Maßstab.
+
+Eine Warnung zur Arbeitsweise an diesen Dateien: jede von ihnen läuft auf ihrem Weg auf die Platte selbst durch den Filter. Eine Adresse, die als Literal im Quelltext steht, kann dort als etwas anderes ankommen, und aus einer Ausgabe kopierte Werte sind Ersatzwerte, keine Beispiele. Werte, auf die es ankommt, deshalb zur Laufzeit aus Zahlen zusammensetzen, wie es `ranges_test.go` und `v4` neben `payload` tun; nur so ist die Probe das, was sie zu sein vorgibt. Beim Verschieben ganzer Dateien hilft `cp`: was nie durch das Modell läuft, kann auch nicht verfälscht ankommen.
 
 ---
 
@@ -12,9 +18,9 @@ Eine Warnung zur Arbeitsweise in diesem Verzeichnis: jede Testdatei läuft auf i
 
 Was vor dem produktiven Einsatz weg muss, ist nicht die längste Liste, sondern die kurze: nur zwei Befunde können aktiv Schaden anrichten, und beide stehen im Kapitel über die Sonderzeichen im Originalwert. Ein Wagenrücklauf zeigt in der Rückfrage einen anderen Befehl an, als ausgeführt wird, und ein Zeilenumbruch oder ein Semikolon im Wert verwandelt eine Zeile in zwei. Solange die Term-Liste keinen Wert mit Steuerzeichen, Anführungszeichen, Semikolon, Prozentzeichen oder Schrägstrich enthält, ist dieser Weg zu. Das ist heute eine Frage der Disziplin und sollte eine Prüfung beim Laden werden; bis dahin ist die Liste durchzusehen. Alles andere in diesem Bericht lässt Daten hinaus oder verliert Text — schlimm genug, aber es zerstört nichts auf einem Server.
 
-Zuerst die sieben Kuren, die je eine Zeile sind und keine Entscheidung verlangen: das Doppelkreuz im Term und das Byte Order Mark im Lader, `signature` an den Blocktyp gebunden, der gepunktete Sperrschlüssel elementweise verglichen, die Endung eines Dateinamens nach ihrer Form geprüft statt einfach behalten, die Sperrregeln an ihren Ort statt an den Schlüsselnamen gebunden, und der Werkzeugname überall gleich behandelt. Alle sieben treffen jeden Nutzer, alle sieben haben einen Test. Die letzten zwei wiegen im Alltag mehr als sie kosten: die Argumente eines Werkzeugaufrufs sind der Ort, an dem ein Systemadministrator seine Werte hinschickt, und ein halb ersetzter Werkzeugname macht die Anfrage kaputt.
+Die sieben Kuren von je einer Zeile sind erledigt und liegen in drei Commits. `8e1bbb7` bindet die Sperrliste an den Ort statt an den Schlüsselnamen: `signature` hängt jetzt am Blocktyp, unterhalb der Argumente eines Werkzeugaufrufs gilt keine Regel mehr, ein gepunkteter Eintrag wird elementweise verglichen, und die Felder, die der Anbieter wörtlich braucht, stehen in der Liste — `container`, das Zugangsdatum eines MCP-Servers, `tool_choice`, `mcp_servers`, `input_schema.required`, `stop_sequences`, `betas` und die Signatur im Stream-Delta. `4d5f2e3` bringt dem Lader der Term-Liste bei, ein Doppelkreuz nur dort als Kommentar zu lesen, wo es eines sein kann, und ein vorangestelltes Byte Order Mark abzuwerfen. `d9821d0` prüft die Endung eines Dateinamens auf ihre Form, statt sie zu behalten. Jede Kur hat ihren Test, und kein grüner ist dabei gekippt.
 
-Dann die drei Lecks, die eine Entscheidung brauchen. Der Ersatzraum für IPv4 und MAC verlangt eine Zahl, nämlich wie eng er wird, und ändert die Ersatzwerte bestehender Sitzungen; er erledigt zugleich den Weg, auf dem ein ausgeschlossener Treffer sein ganzes Token abschirmt. Der Teiltreffer verlangt, die Vorschicht `promoteAddresses` von Mailadressen auf jede Art zu verallgemeinern. Die Schlüsselnamen im JSON verlangen, den Rundgang auch über sie zu führen, und das ist die aufwendigste der drei. Alle drei sind aber die, die im Alltag eines Systemadministrators wirklich greifen, denn Werkzeugausgaben schlüsseln nach Namen und Verzeichnisse tragen Kunde und Vorgang im selben Wort.
+Als Nächstes die drei Lecks, die eine Entscheidung brauchen. Der Ersatzraum für IPv4 und MAC verlangt eine Zahl, nämlich wie eng er wird, und ändert die Ersatzwerte bestehender Sitzungen; er erledigt zugleich den Weg, auf dem ein ausgeschlossener Treffer sein ganzes Token abschirmt. Der Teiltreffer verlangt, die Vorschicht `promoteAddresses` von Mailadressen auf jede Art zu verallgemeinern. Die Schlüsselnamen im JSON verlangen, den Rundgang auch über sie zu führen, und das ist die aufwendigste der drei. Alle drei sind aber die, die im Alltag eines Systemadministrators wirklich greifen, denn Werkzeugausgaben schlüsseln nach Namen und Verzeichnisse tragen Kunde und Vorgang im selben Wort.
 
 Danach die Verfälschungen. Der Stream braucht zwei Handgriffe: den Rückhalt beim Fehlerereignis ausspülen und die Rückhalte eines Chunks erst festschreiben, wenn alle seine Ereignisse durch sind. Der fehlende Rückhalt am Ende eines vollständigen Ersatzwertes und das einzelne Surrogat sind eng umrissen und haben je einen roten Test. Der Ersatzwert, der im Gesprächsverlauf hängen bleibt, ist der einzige Befund, dessen Schaden lokal entsteht; die vorgeschlagene Kur, die Zuordnung an die Sitzung statt an die Anfrage zu binden, erledigt die Frist der Tabelle gleich mit, und beides zusammen zu entscheiden spart die halbe Arbeit.
 
@@ -72,6 +78,8 @@ Reproduktion: `TestHarm_FileNamePseudonymCarriesTheSuffix`, rot, mit einer gewö
 
 Vorschlag: nur behalten, was als Dateiendung durchgeht — höchstens fünf Zeichen, nur Buchstaben und Ziffern, keine Unterstriche, kein Bindestrich —, und alles andere mitersetzen. Wer es genauer will, prüft gegen eine Liste der Endungen, die im Alltag vorkommen; die Prüfung nach Form deckt die Fälle ab, auf die es ankommt.
 
+Behoben mit `d9821d0`, genau so: `maxExtLen` steht bei einem Punkt und fünf Bytes, und der Zeichensatz kennt nur noch Buchstaben und Ziffern. Der Test ist grün. Was bleibt, ist die Endung, die kurz, alphanumerisch und trotzdem vertraulich ist — `.ACME` ist von `.JPEG` der Form nach nicht zu unterscheiden. Das schlösse nur eine Liste bekannter Endungen, um den Preis, dass jede unbekannte Endung wegfällt.
+
 ---
 
 # Die Term-Liste verliert Werte beim Laden
@@ -83,6 +91,8 @@ Zwei Stellen, an denen ein Term als etwas anderes ankommt, als er in der Datei s
 Die zweite Stelle ist das Byte Order Mark. `strings.TrimSpace` entfernt U+FEFF nicht, weil es kein Leerraumzeichen ist. Wer die Liste unter Windows oder mit einem Editor pflegt, der eine Signatur schreibt, hat als ersten Term eine Zeichenkette, die auf nichts passt — und merkt es nicht, weil nichts protokolliert wird. Ein `strings.TrimPrefix` auf das erste Byte-Tripel der Datei genügt.
 
 Reproduktion: `TestTerm_TruncatedAtHash` und `TestTerm_ByteOrderMark`. Der Lader selbst liegt in `package main` und ist von außen nicht ladbar; die Tests zeigen die Wirkung auf der Detektorebene, die Ursache steht in der genannten Zeile.
+
+Behoben mit `4d5f2e3`. Ein Doppelkreuz öffnet einen Kommentar nur noch am Zeilenanfang oder hinter einem Leerzeichen, eine Zeile in der YAML-Form behält ihres, und ein vorangestelltes Byte Order Mark fällt weg. Die zwei genannten Tests bilden den alten Lader nach und sind damit gegenstandslos geworden; sie sind entfallen. An ihre Stelle treten `TestParseTermsFile_HashInsideAValue` und `TestParseTermsFile_ByteOrderMark` neben `termsfile.go`, die den Lader selbst prüfen, weil sie im selben Paket liegen.
 
 ---
 
@@ -107,6 +117,8 @@ Vorschlag: die Zuordnung an die Sitzung binden statt an die Anfrage. Der Salt is
 Reproduktion: `TestDeny_SignatureOutsideThinking`, rot für die drei Fremdverwendungen, grün für die Signatur im Denkblock, die unangetastet bleiben muss.
 
 Vorschlag: `signature` an den Blocktyp binden, so wie `name` schon an `ToolNameParents` gebunden ist — gesperrt innerhalb eines Blocks mit `type: thinking` oder `redacted_thinking`, sichtbar überall sonst. Die Sperrliste hat die Maschinerie dafür bereits.
+
+Behoben mit `8e1bbb7`: der Schlüsselname ist aus `Keys` verschwunden, die Teilbaum-Regel deckt die Signatur im Denkblock ohnehin ab. Dazu kamen zwei Einträge, die das Original nur im Stream betreffen: `thinking_delta` und `signature_delta` gelten jetzt als Blocktypen, damit auch ein Bruchstück eines Denkblocks in keiner Richtung angefasst wird, und `delta.signature` steht als Pfad in der Liste.
 
 ---
 
@@ -134,6 +146,10 @@ Reproduktion: `TestJSONEdge_DenyRulesReachIntoToolArguments`, `TestJSONEdge_Obje
 
 Vorschlag: die Sperrregeln an ihren Ort binden, nicht an den Namen. Innerhalb von `tool_use.input` und `tool_result.content` gilt kein Schemafeld, denn dort schreibt das Werkzeug. Für den Blocktyp genügt, ihn nur dort zu lesen, wo ein Block stehen darf — als Element einer `content`-Liste —, und nicht in beliebigen Objekten. Und die beiden Richtungen sollten denselben Schlüssel lesen; welchen, ist zweitrangig, solange es derselbe ist.
 
+Zur Hälfte behoben mit `8e1bbb7`. Unterhalb der `input` eines Werkzeugblocks gilt jetzt keine Regel der Liste mehr, und diese Prüfung steht vor der Teilbaum-Regel, damit ein Argument namens `type` mit dem Wert `thinking` nicht mehr seinen eigenen Teilbaum ausnimmt; `TestJSONEdge_DenyRulesReachIntoToolArguments` ist grün, die Gegenprobe `TestJSONEdge_DenyRulesStillHoldWhereTheyBelong` ebenfalls. Der Inhalt eines `tool_result` behält die Regeln mit Absicht: dort gilt das Schema wirklich, und ein Bild, das ein Werkzeug zurückgibt, trägt seine Bytes unter `source.data` wie jedes andere.
+
+Offen bleiben die doppelten Schlüssel. `TestJSONEdge_DuplicateTypeKeyDecidesTheDenyList`, `TestJSONEdge_DuplicateKeyInOneObject` und `TestJSONEdge_ObjectOfOnlyDeniedKeys` sind weiter rot, denn ihre Ursache liegt nicht in der Sperrliste, sondern darin, wie die beiden Richtungen ein Objekt lesen: der Hinweg über eine Map, in der das letzte Paar gewinnt und das erste vor jedem Besucher verschwindet, der Rückweg über einen Byte-Scanner, der beide sieht. Wer das angeht, entscheidet zuerst, welcher Schlüssel gelten soll, und zieht dann beide Richtungen darauf.
+
 ---
 
 # Ein Werkzeugname wird an einer Stelle ersetzt und an der anderen nicht
@@ -143,6 +159,8 @@ Vorschlag: die Sperrregeln an ihren Ort binden, nicht an den Namen. Innerhalb vo
 Reproduktion: `TestJSONEdge_FieldsTheAPIKnows`, rot, mit der Liste der besuchten Pfade im Protokoll.
 
 Vorschlag: die Sperre von `tools[].name` auf alles ausweiten, was denselben Namen bezeichnet — `tool_choice.name`, `mcp_servers[].name`, `container` —, und die Schlüssel eines `input_schema` samt seiner `required`-Liste unangetastet lassen. Wer Werkzeugnamen schützen will, muss sie überall gleich behandeln; halb ersetzt ist schlechter als beides.
+
+Behoben mit `8e1bbb7`, und etwas weiter gefasst als vorgeschlagen: `tool_choice` und `mcp_servers` sind zu den Eltern des Werkzeugnamens gekommen, `container` und das Zugangsdatum eines MCP-Servers zu den Schlüsseln, `input_schema.required`, `stop_sequences` und `betas` zu den Pfaden. `stop_sequences` steht dabei aus demselben Grund in der Liste wie der Werkzeugname: der Anbieter vergleicht die Zeichenkette wörtlich, ein Ersatzwert würde nie treffen. Die Beschreibung einer Eigenschaft im Schema bleibt Prosa und wird weiter ersetzt.
 
 ---
 
@@ -191,6 +209,8 @@ Das ist der einzige Befund mit Leckwirkung. Sein Gewicht hängt daran, wie wahrs
 Reproduktion: `TestDeny_DottedKeyConfusion`. Der Gegentest für Teilbaum-Regeln, `TestDeny_DottedKeyConfusionSubtree`, ist grün, und `TestDeny_ToolUseInputName` bestätigt die feine Unterscheidung zwischen `tool_use.name` und `tool_use.input.name`.
 
 Vorschlag: Pfade elementweise vergleichen statt über die zusammengesetzte Form, oder beim Zusammensetzen Punkte im Schlüsselnamen kennzeichnen. Der Fundort ist `DenyList.Denied` in `payload/deny.go`, Abschnitt „Dotted rule“.
+
+Behoben mit `8e1bbb7`: `matchesTail` vergleicht den Eintrag Stück für Stück gegen das Ende des Pfades, und kein Stück darf einen Punkt des Pfades überspannen. Ein einzelner Schlüssel `metadata.user_id` ist damit ein Element und trifft die zweielementige Regel nicht mehr.
 
 ---
 
@@ -320,10 +340,12 @@ Die Eigenschaften halten auch über zufällige Eingaben. Zehn Fuzz-Ziele prüfen
 
 ---
 
-# Was dieses Labor nicht erreicht
+# Was diese Tests nicht erreichen
 
-Von außen erreichbar sind `detect`, `pseudo`, `mapping` und `payload`. Nicht erreichbar sind der Interceptor, `stream.go`, der Lader der Term-Datei, die Prüfung der Konfiguration und das Prüfprotokoll: sie liegen in `package main`, und `internal/*` sperrt Go ohnehin. Der Ablauf des Streams ist deshalb in `stream/rebuild.go` nachgebaut, Zeile für Zeile nach der Vorlage, und die Befunde des Stream-Kapitels stehen und fallen mit der Treue dieses Nachbaus. Er lässt weg, was sich von außen nicht nachbilden lässt: den Mutex, den Panik-Auffang, das Protokoll und den Zugriff auf den Tabellenspeicher. Ungeprüft bleiben damit die Nebenläufigkeit eines Streamzustands unter den Aufrufen des Hosts, das Aufräumen am Ende eines Streams und die Frage, ob der Host einen fehlerhaften Chunk wirklich unverändert weiterreicht und einen unterdrückten wirklich unterdrückt.
+Solange die Tests ein eigenes Modul neben dem Klon waren, erreichten sie nur `detect`, `pseudo`, `mapping` und `payload`; der Interceptor, `stream.go`, der Lader der Term-Datei, die Prüfung der Konfiguration und das Prüfprotokoll blieben außen vor, weil sie in `package main` liegen. Diese Schranke ist mit dem Umzug ins Modul gefallen. Der Nachbau des Streamablaufs ist weg, und die Proben laufen gegen `streamState` selbst; siebzehn von neunzehn halten dabei genau so wie gegen den Nachbau, womit auch die Befunde des Stream-Kapitels nicht mehr an dessen Treue hängen. Ungeprüft bleibt die Nebenläufigkeit eines Streamzustands unter den Aufrufen des Hosts und die Frage, ob der Host einen fehlerhaften Chunk wirklich unverändert weiterreicht und einen unterdrückten wirklich unterdrückt.
 
 Ebenso offen ist der Weg durch den echten HTTP-Pfad: ob `on_error: block` bei einem fehlerhaften Body wirklich blockt, ob die Grenze von zweiunddreißig Megabyte sauber greift, was ein mitten im Stream abgebrochener Anbieter mit dem zurückgehaltenen Rest macht, und ob das Prüfprotokoll schreibt, was es schreiben soll. Dass ein `content_block_start` mit gefülltem `input` oder ein Suchergebnis über den Stream kommt, ist der Schnittstellenbeschreibung entnommen und nicht an einem Mitschnitt belegt; für den Wortlaut einer Fehlermeldung gilt dasselbe.
+
+Ebenfalls offen: betterleaks hinter seinem Build-Tag, die Erkennung von Zugangsdaten also, und alles, was nicht dem Anthropic-Schema folgt. Die Race beim Neuladen der Konfiguration im laufenden Host, der Punkt aus dem Übergabedokument, ist hier nicht zu prüfen; was geprüft ist, ist die Nebenläufigkeit der Bausteine, und die hält.
 
 Ebenfalls offen: betterleaks hinter seinem Build-Tag, die Erkennung von Zugangsdaten also, und alles, was nicht dem Anthropic-Schema folgt. Die Race beim Neuladen der Konfiguration im laufenden Host, der Punkt aus dem Übergabedokument, ist hier nicht zu prüfen; was geprüft ist, ist die Nebenläufigkeit der Bausteine, und die hält.

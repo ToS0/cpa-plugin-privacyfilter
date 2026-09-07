@@ -13,39 +13,6 @@ import (
 	"github.com/rheodev/cpa-plugin-privacyfilter/detect"
 )
 
-// termsfile.go cuts every line at the first '#', unless the line starts with
-// '{'. A value containing '#' is therefore loaded truncated, and the part
-// after the '#' is left unprotected.
-func TestTerm_TruncatedAtHash(t *testing.T) {
-	skipOpenFinding(t)
-	full := "Projekt" + "#" + "42"
-	loaded := full[:strings.IndexByte(full, '#')] // what the loader keeps
-
-	d := newTerms(t, detect.Term{Value: loaded, Kind: detect.KindPathSegment})
-	tab := newTable(t)
-	text := "die Unterlagen liegen unter " + full
-	mid := forward(text, d, tab)
-	t.Logf("term as written %q, term as loaded %q", full, loaded)
-	t.Logf("%q\n   -> %q", text, mid)
-	if strings.Contains(mid, "#42") {
-		t.Errorf("the part after the hash stayed in the text: %q", mid)
-	}
-}
-
-// A file saved by a Windows editor starts with a byte order mark. Trimming
-// spaces does not remove it, so the first term of the list is a different
-// string from the one the user typed.
-func TestTerm_ByteOrderMark(t *testing.T) {
-	skipOpenFinding(t)
-	const bom = "\ufeff"
-	d := newTerms(t, detect.Term{Value: bom + "zeus.lan", Kind: detect.KindHost})
-	tab := newTable(t)
-	mid := forward("ssh zeus.lan", d, tab)
-	if mid == "ssh zeus.lan" {
-		t.Errorf("the first term of the list protects nothing: %q", mid)
-	}
-}
-
 // Short and common terms replace far more than intended. Nothing here is a
 // defect of the code; it is what a user needs to be warned about.
 func TestTerm_ShortAndCommonValues(t *testing.T) {
