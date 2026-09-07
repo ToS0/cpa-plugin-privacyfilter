@@ -2,7 +2,7 @@
 
 Ziel ist ein Plugin, das im Dauerbetrieb keinen Schaden anrichtet: keine vertraulichen Werte hinaus, keine verfälschten Befehle zurück, kein Blockieren gültiger Anfragen, kein Datenverlust im Stream. Was geprüft ist und was dabei herauskam, steht in [BEFUNDE.md](BEFUNDE.md); diese Datei sagt, wo was liegt und was noch fehlt, damit eine Sitzung ohne Vorgeschichte weitermachen kann.
 
-Der Stand: von neunzehn Befunden sind achtzehn behoben, offen ist die Lücke im Netz der Pfadebene. Zehn Tests im Paket `harm` zeigen, was ein Term mit Sonderzeichen anrichtet; sie überspringen sich selbst, bis `PRIVACYFILTER_OPEN_FINDINGS` gesetzt ist, weil die Kur eine Warnung beim Laden ist und die Wirkung eines solchen Wertes nicht ändert.
+Der Stand: von neunzehn Befunden sind achtzehn behoben, und die Lücke im Netz der Pfadebene ist als Grenze angenommen und im README beschrieben. Zehn Tests im Paket `harm` zeigen, was ein Term mit Sonderzeichen anrichtet; sie überspringen sich selbst, bis `PRIVACYFILTER_OPEN_FINDINGS` gesetzt ist, weil der Lader einen solchen Wert seit dem 7. September abweist und die Tests die Wirkung dokumentieren, die er verhindert.
 
 
 ---
@@ -35,4 +35,4 @@ Der Weg durch den echten HTTP-Pfad ist von hier nicht zu prüfen: ob `on_error: 
 
 Ungeprüft sind ferner betterleaks hinter seinem Build-Tag und alles, was nicht dem Anthropic-Schema folgt. Die Race beim Neuladen der Konfiguration im laufenden Host bleibt eine Frage für das lebende System; die Nebenläufigkeit der Bausteine ist geprüft und hält.
 
-Was die Befunde selbst angeht, liegt die Reihenfolge im zweiten Kapitel des Berichts. Sie ist abgearbeitet bis auf die Lücken im Netz der Pfadebene, die eine Frage der Zielgruppe sind, und die Versalschrift mit SS, die eine Abwägung bleibt. Was jetzt zählt, ist der Betrieb: eine Claude-Code-Sitzung über mehrere Token-Refreshes des Hosts ohne „no mapping table“ im Log.
+Was die Befunde selbst angeht, liegt die Reihenfolge im zweiten Kapitel des Berichts. Sie ist abgearbeitet; die Lücken im Netz der Pfadebene und die Versalschrift mit SS hat der Nutzer als Grenzen angenommen, beide stehen im README. Was jetzt zählt, ist der Betrieb: eine Claude-Code-Sitzung über mehrere Token-Refreshes des Hosts ohne „no mapping table“ im Log.

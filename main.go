@@ -227,6 +227,9 @@ func (p *privacyFilterPlugin) initPseudonymize() error {
 		if kind := detect.Kind(t.Kind); !kind.Valid() {
 			return fmt.Errorf("privacyfilter: terms[%d]: invalid kind %q, want one of %s", i, t.Kind, detect.KindNames())
 		}
+		if termUnsafe(t) {
+			return fmt.Errorf("privacyfilter: terms[%d]: %w", i, unsafeTermError())
+		}
 	}
 	if termsPath := resolveTermsFilePath(p.pluginDir, p.cfg.TermsFile); termsPath != "" {
 		fromFile, lines, errFile := loadTermsFileLines(termsPath)
@@ -240,23 +243,22 @@ func (p *privacyFilterPlugin) initPseudonymize() error {
 			if kind := detect.Kind(t.Kind); !kind.Valid() {
 				return fmt.Errorf("privacyfilter: terms_file %s line %d: invalid kind %q, want one of %s", termsPath, lines[i], t.Kind, detect.KindNames())
 			}
+			// The value of a term is written back into every text the
+			// client goes on to run, parse or store. A quote, a shell
+			// metacharacter, a comment mark, a percent sign, a slash or a
+			// control character in it turns the line the model wrote into a
+			// different one for the shell, the crontab, the configuration
+			// file or the patch that receives it; see the package harm under
+			// internal/testlab. Such a value is refused at start, with the
+			// line but without the value.
+			if termUnsafe(t) {
+				return fmt.Errorf("privacyfilter: terms_file %s line %d: %w", termsPath, lines[i], unsafeTermError())
+			}
 		}
 		entries = mergeTerms(entries, fromFile)
 		log.Infof("privacyfilter: %d terms loaded from %s, %d in total after merging", len(fromFile), termsPath, len(entries))
 	}
 	p.termCount = len(entries)
-	if n := countUnsafeTerms(entries); n > 0 {
-		// The value of a term is written back into every text the client
-		// goes on to run, parse or store. A quote, a shell metacharacter, a
-		// comment mark, a percent sign, a slash or a control character in it
-		// turns the line the model wrote into a different one for the shell,
-		// the crontab, the configuration file or the patch that receives it;
-		// see the package harm under internal/testlab. The plugin cannot know
-		// where a value will land, so it warns and leaves the decision to
-		// the list's owner. The values are not logged.
-		log.Warnf("privacyfilter: %d term(s) carry characters that change their meaning in a command line, a configuration file or a patch (quotes, shell metacharacters, #, %%, /, backslash, control characters); a restored value can then alter what the client runs or writes, see README, Known limits", n)
-	}
-
 	// A literal term that equals an entry of the built-in name list, or the
 	// given name of one, would be its own pseudonym and never be replaced.
 	// Such entries are left out of the list for this plugin instead; the

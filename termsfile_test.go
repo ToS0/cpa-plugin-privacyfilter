@@ -205,26 +205,65 @@ func TestTermsFile_KindReportNamesTheLine(t *testing.T) {
 	}
 }
 
-func TestTermsFile_UnsafeValuesAreCounted(t *testing.T) {
+// The characters that are structure somewhere: in a shell, a comment, a
+// crontab, a path, a JSON document. Letters of any script are not among
+// them, so a Chinese, a Turkish or a German name passes; a network keeps its
+// slash, and a regular expression is not judged at all.
+func TestTermsFile_UnsafeValues(t *testing.T) {
 	unsafe := []string{
 		"Meier & Sohn", "Kunden/Meier", "q3%2026", "Projekt#42", "Sean O'Connor",
 		"a;b", "a|b", "a`b", "a$b", "a<b", "a>b", `a"b`, "a" + string(rune(92)) + "b",
-		"a\tb", "a\nb", "a\rb", "a" + string(rune(27)) + "b",
+		"a" + string(rune(9)) + "b", "a" + string(rune(10)) + "b", "a" + string(rune(13)) + "b",
+		"a" + string(rune(27)) + "b", "北京#42",
 	}
-	safe := []string{"zeus.lan", "Meier GmbH", "kunde-x", "Müller Söhne", "a.b*c", "kunde(x)"}
-	var entries []TermEntry
+	safe := []string{
+		"zeus.lan", "Meier GmbH", "kunde-x", "Müller Söhne", "Straßburger", "a.b*c", "kunde(x)",
+		"北京客户", "東京 支店", "Ünal İş", "Ærø Kommune", "Владимир", "Ａｃｍｅ", "客户【42】",
+	}
 	for _, v := range unsafe {
-		entries = append(entries, TermEntry{Value: v, Kind: "path_segment"})
+		if !termUnsafe(TermEntry{Value: v, Kind: "path_segment"}) {
+			t.Errorf("%q passed", v)
+		}
 	}
 	for _, v := range safe {
-		entries = append(entries, TermEntry{Value: v, Kind: "path_segment"})
+		if termUnsafe(TermEntry{Value: v, Kind: "person"}) {
+			t.Errorf("%q was refused", v)
+		}
 	}
-	// The slash of a network is the one it is meant to have; a regular
-	// expression is not judged at all.
-	entries = append(entries,
-		TermEntry{Value: "10.13.0.0/16", Kind: "cidr"},
-		TermEntry{Regex: `kunde/[0-9]+;`, Kind: "path_segment"})
-	if n := countUnsafeTerms(entries); n != len(unsafe) {
-		t.Errorf("countUnsafeTerms = %d, want %d", n, len(unsafe))
+	if termUnsafe(TermEntry{Value: "10.13.0.0/16", Kind: "cidr"}) {
+		t.Error("the slash of a network was counted")
+	}
+	if termUnsafe(TermEntry{Regex: `kunde/[0-9]+;`, Kind: "path_segment"}) {
+		t.Error("a regular expression was judged")
+	}
+}
+
+// The loader refuses such a value at start and names the line of the terms
+// file, not the value.
+func TestTermsFile_UnsafeValueIsRefusedWithTheLine(t *testing.T) {
+	dir := t.TempDir()
+	termsPath := filepath.Join(dir, "terms.txt")
+	file := "# hosts" + string(rune(10)) + string(rune(10)) + "p14 host" + string(rune(10)) + "{value: " + string(rune(34)) + "Meier & Sohn" + string(rune(34)) + ", kind: person}" + string(rune(10))
+	if err := os.WriteFile(termsPath, []byte(file), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "s.secret"), []byte(strings.Repeat("ab", 32)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfgYAML := "mode: pseudonymize" + string(rune(10)) + "salt_secret_path: " + filepath.Join(dir, "s.secret") + string(rune(10)) + "terms_file: " + termsPath + string(rune(10))
+	_, err := buildPlugin([]byte(cfgYAML), dir, nil)
+	if err == nil {
+		t.Fatal("a value with an ampersand was accepted")
+	}
+	if !strings.Contains(err.Error(), "line 4") || !strings.Contains(err.Error(), "metacharacter") {
+		t.Errorf("error %q does not name the line and the class", err)
+	}
+	if strings.Contains(err.Error(), "Meier") {
+		t.Errorf("error %q quotes the value", err)
+	}
+
+	inline := "mode: pseudonymize" + string(rune(10)) + "salt_secret_path: " + filepath.Join(dir, "s.secret") + string(rune(10)) + "terms:" + string(rune(10)) + "  - {value: " + string(rune(34)) + "a;b" + string(rune(34)) + ", kind: host}" + string(rune(10))
+	if _, err := buildPlugin([]byte(inline), dir, nil); err == nil || !strings.Contains(err.Error(), "terms[0]") {
+		t.Errorf("an inline value with a semicolon: %v", err)
 	}
 }
