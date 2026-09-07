@@ -160,9 +160,9 @@ type LimitsConfig struct {
 	// MaxBodyBytes rejects request bodies larger than this many bytes.
 	MaxBodyBytes int `yaml:"max_body_bytes"`
 	// MappingTTL is a Go duration string, for example "30m". It is measured
-	// from the request, not from the last use, and must outlast the longest
-	// upstream turnaround: a table that expires before the response arrives
-	// leaves the pseudonyms on the user's screen. validate parses it with
+	// from the last use of a conversation's table; every request, response
+	// and stream chunk counts, so a running conversation keeps its table
+	// and a quiet one loses it after this time. validate parses it with
 	// time.ParseDuration and rejects the config if it does not parse; the
 	// integrator can then parse it again without an error check.
 	MappingTTL string `yaml:"mapping_ttl"`

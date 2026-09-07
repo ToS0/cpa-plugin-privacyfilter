@@ -154,7 +154,7 @@ func buildPlugin(configYAML []byte, pluginDir string, rt *runtimeState) (plugina
 				{
 					Name:        "limits",
 					Type:        pluginapi.ConfigFieldTypeObject,
-					Description: "max_body_bytes (default 33554432, 32 MiB) and mapping_ttl (default 30m, a Go duration string, measured from the request; must outlast the longest upstream turnaround) for the request-scoped mapping table.",
+					Description: "max_body_bytes (default 33554432, 32 MiB) and mapping_ttl (default 30m, a Go duration string, measured from the last use of a conversation's mapping table; a quiet conversation loses its table after this time).",
 				},
 				{
 					Name:        "audit",

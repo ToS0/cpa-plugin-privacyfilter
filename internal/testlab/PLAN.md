@@ -2,7 +2,7 @@
 
 Ziel ist ein Plugin, das im Dauerbetrieb keinen Schaden anrichtet: keine vertraulichen Werte hinaus, keine verfälschten Befehle zurück, kein Blockieren gültiger Anfragen, kein Datenverlust im Stream. Was geprüft ist und was dabei herauskam, steht in [BEFUNDE.md](BEFUNDE.md); diese Datei sagt, wo was liegt und was noch fehlt, damit eine Sitzung ohne Vorgeschichte weitermachen kann.
 
-Der Stand: von neunzehn Befunden sind fünf behoben und einer zur Hälfte, dreizehn stehen offen. Vierunddreißig Tests halten die offenen fest; sie überspringen sich selbst, bis `PRIVACYFILTER_OPEN_FINDINGS` gesetzt ist, damit die Suite grün bleibt und trotzdem nichts verschwindet.
+Der Stand: von neunzehn Befunden sind zehn behoben und einer zur Hälfte, acht stehen offen. Fünfundzwanzig Tests halten die offenen fest; sie überspringen sich selbst, bis `PRIVACYFILTER_OPEN_FINDINGS` gesetzt ist, damit die Suite grün bleibt und trotzdem nichts verschwindet.
 
 
 ---
@@ -35,4 +35,4 @@ Der Weg durch den echten HTTP-Pfad ist von hier nicht zu prüfen: ob `on_error: 
 
 Ungeprüft sind ferner betterleaks hinter seinem Build-Tag und alles, was nicht dem Anthropic-Schema folgt. Die Race beim Neuladen der Konfiguration im laufenden Host bleibt eine Frage für das lebende System; die Nebenläufigkeit der Bausteine ist geprüft und hält.
 
-Was die Befunde selbst angeht, liegt die Reihenfolge im zweiten Kapitel des Berichts. Sie beginnt jetzt bei den drei Lecks, die eine Entscheidung verlangen, und endet bei der Härtung, die warten kann.
+Was die Befunde selbst angeht, liegt die Reihenfolge im zweiten Kapitel des Berichts. Die drei Lecks, die eine Entscheidung verlangten, sind entschieden und kuriert; sie beginnt jetzt bei den Schlüsselnamen im JSON und den Verfälschungen im Stream und endet bei der Härtung, die warten kann.
