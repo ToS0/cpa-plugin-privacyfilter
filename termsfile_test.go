@@ -134,3 +134,48 @@ func TestPseudonymize_TermsFileMerged(t *testing.T) {
 		t.Fatalf("buildPlugin with a broken terms file: err = %v, want a terms_file error", err)
 	}
 }
+
+// A '#' inside a value belongs to the value. Cutting the line at every '#'
+// loaded such a term truncated and left the part behind the '#' unprotected,
+// which is the opposite of what the list is for.
+func TestParseTermsFile_HashInsideAValue(t *testing.T) {
+	in := strings.Join([]string{
+		"# a comment on its own line",
+		"   # an indented comment",
+		"Projekt#42 path_segment",
+		"p14.local host   # trailing comment",
+		"ticket#7#8 path_segment",
+		"#leading path_segment",
+	}, "\n")
+	got, err := parseTermsFile(strings.NewReader(in))
+	if err != nil {
+		t.Fatalf("parseTermsFile: %v", err)
+	}
+	want := []TermEntry{
+		{Value: "Projekt#42", Kind: "path_segment"},
+		{Value: "p14.local", Kind: "host"},
+		{Value: "ticket#7#8", Kind: "path_segment"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("parseTermsFile =\n%+v\nwant\n%+v", got, want)
+	}
+}
+
+// An editor on Windows writes a byte order mark ahead of the first line.
+// TrimSpace does not remove it, so without the cure the first term of the
+// list is a different string from the one the user typed and protects
+// nothing. The mark is written as its three bytes because the compiler
+// rejects the character itself in source.
+func TestParseTermsFile_ByteOrderMark(t *testing.T) {
+	got, err := parseTermsFile(strings.NewReader("\xef\xbb\xbfp14.local host\np14 host"))
+	if err != nil {
+		t.Fatalf("parseTermsFile: %v", err)
+	}
+	want := []TermEntry{
+		{Value: "p14.local", Kind: "host"},
+		{Value: "p14", Kind: "host"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("parseTermsFile =\n%+v\nwant\n%+v", got, want)
+	}
+}

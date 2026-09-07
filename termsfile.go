@@ -22,11 +22,14 @@ import (
 //	{value: "wendler.de", kind: domain}
 //
 // A line starting with "{" is a YAML flow mapping with the same keys as a
-// terms[] entry in config.yaml. Anything after "#" is a comment, blank lines
-// are skipped. A line of the first form is split on white space: the first
-// word is the literal, the optional second word the kind, and the optional
-// word ignore_case sets the flag. A literal that needs spaces or that starts
-// with "{" or "#" goes into the YAML form.
+// terms[] entry in config.yaml. A "#" at the start of a line or after white
+// space opens a comment; a "#" inside a word belongs to the value, so
+// Projekt#42 is one term and not a truncated one. Blank lines are skipped,
+// and a byte order mark ahead of the first line is dropped. A line of the
+// first form is split on white space: the first word is the literal, the
+// optional second word the kind, and the optional word ignore_case sets the
+// flag. A literal that needs spaces, that starts with "{" or "#", or that
+// carries a "#" behind a space goes into the YAML form.
 
 // termsFileDefaultKind applies when a plain line names no kind.
 const termsFileDefaultKind = "host"
@@ -70,10 +73,15 @@ func parseTermsFile(r io.Reader) ([]TermEntry, error) {
 	for sc.Scan() {
 		lineNo++
 		line := sc.Text()
-		if i := strings.IndexByte(line, '#'); i >= 0 && !strings.HasPrefix(strings.TrimSpace(line), "{") {
-			line = line[:i]
+		if lineNo == 1 {
+			// An editor on Windows writes a byte order mark ahead of the
+			// first line. TrimSpace does not remove it, so without this the
+			// first term of the list is a different string from the one the
+			// user typed and protects nothing. Written as its three bytes
+			// because the compiler rejects the character itself in source.
+			line = strings.TrimPrefix(line, "\xef\xbb\xbf")
 		}
-		line = strings.TrimSpace(line)
+		line = strings.TrimSpace(stripTermsComment(line))
 		if line == "" {
 			continue
 		}
@@ -87,6 +95,28 @@ func parseTermsFile(r io.Reader) ([]TermEntry, error) {
 		return nil, err
 	}
 	return entries, nil
+}
+
+// stripTermsComment removes a comment from one line. A '#' opens a comment
+// only at the start of a line or after white space, so a term that carries a
+// '#' inside its value - Projekt#42, a ticket number, a fragment of a URL -
+// is loaded whole. Cutting at every '#' would load such a term truncated and
+// leave the part behind the '#' unprotected, which is the opposite of what
+// the list is for. A line in the YAML form keeps its '#', because there a
+// quoted value may hold one.
+func stripTermsComment(line string) string {
+	if strings.HasPrefix(strings.TrimSpace(line), "{") {
+		return line
+	}
+	for i := 0; i < len(line); i++ {
+		if line[i] != '#' {
+			continue
+		}
+		if i == 0 || line[i-1] == ' ' || line[i-1] == '\t' {
+			return line[:i]
+		}
+	}
+	return line
 }
 
 // parseTermsLine parses one non-empty, trimmed line.
