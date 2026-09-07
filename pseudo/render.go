@@ -46,7 +46,7 @@ type Renderer interface {
 //	KindHost         h-<12hex>
 //	KindDomain       d-<12hex>.invalid          (RFC 2606)
 //	KindPathSegment  d-<12hex>
-//	KindFileName     f-<12hex><ext>             (extension of the original kept, including the dot)
+//	KindFileName     f-<12hex><ext>             (extension kept when it looks like one: a dot and up to five letters or digits)
 //	KindEmail        u-<12hex>@d-<12hex>.invalid (composed by Generator, see Pseudonym)
 //	KindPerson       a name from Names, indexed by the digest; when the
 //	                 original has no space (a lone given name, nickname or
@@ -95,7 +95,18 @@ const (
 // that Matches can tell a pseudonym from a real value of the same kind.
 //
 //   - maxExtLen bounds the file extension carried over, so MaxLen stays an
-//     upper bound for any input; a longer extension is dropped.
+//     upper bound for any input; a longer extension is dropped. The bound is
+//     deliberately tight, a dot and five bytes of letters and digits, because
+//     whatever the renderer keeps leaves the machine in clear text. What
+//     follows the last dot of a file name is not always an extension:
+//     bericht.Meier-GmbH and export.P2026_4711 are everyday shapes, and there
+//     the suffix is the very value that had to be replaced. Five bytes cover
+//     the extensions a working tree really holds, from .go to .jsonl, and
+//     exclude a customer name or a project number. A suffix that is short,
+//     alphanumeric and still confidential, .ACME, cannot be told from .JPEG
+//     by its form and is kept; only a list of known extensions would close
+//     that, at the price of dropping the suffix of every file the list does
+//     not know.
 //   - ibanMarker is the fixed head of every pseudonym BBAN. Without it a
 //     pseudonym IBAN would be indistinguishable from a real one: the country,
 //     the length and the mod-97 check are all shared by construction, so a
@@ -109,7 +120,7 @@ const (
 //     unchanged. Against the fixed /48 a real ULA network collides only if its
 //     40 random global-ID bits happen to be exactly these.
 const (
-	maxExtLen  = 16
+	maxExtLen  = 6
 	ibanMarker = "0000"
 	minIBANLen = 15
 	maxIBANLen = 34
@@ -809,7 +820,10 @@ func (fileNameRenderer) MaxLen() int { return len(PrefixFileName) + HexShort + m
 
 // fileExt returns the last extension of name including the dot, or "" when
 // there is none, when the name is a dot file, or when the extension is longer
-// than maxExtLen or holds characters an extension does not have.
+// than maxExtLen or holds characters an extension does not have. Letters and
+// digits are all it may hold: an underscore or a dash after the last dot is
+// the mark of a name, not of an extension, and keeping it would carry the
+// name out of the machine unreplaced.
 func fileExt(name string) string {
 	i := strings.LastIndexByte(name, '.')
 	if i <= 0 || i == len(name)-1 || len(name)-i > maxExtLen {
@@ -818,7 +832,7 @@ func fileExt(name string) string {
 	for j := i + 1; j < len(name); j++ {
 		c := name[j]
 		switch {
-		case c >= '0' && c <= '9', c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c == '_', c == '-':
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z':
 		default:
 			return ""
 		}
