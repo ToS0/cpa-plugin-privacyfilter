@@ -92,8 +92,8 @@ func Forward(text string, d detect.Detector, tab *mapping.Table) string {
 	return b.String()
 }
 
-// Back restores. Note that the table freezes on the first call, so fill it
-// completely before restoring anything.
+// Back restores with the table's live restorer; rows added later are seen
+// by later calls.
 func Back(text string, tab *mapping.Table) string {
 	out, _ := tab.Restorer().Restore(text, false)
 	return out

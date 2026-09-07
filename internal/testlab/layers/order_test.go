@@ -10,9 +10,11 @@ import (
 )
 
 // Merge gives the layers a precedence: an earlier layer wins against every
-// later match it overlaps, however long that match is. The consequence for
-// the text is that the part of the later match outside the earlier one is
-// reported by nobody and leaves the machine as it is.
+// later match it overlaps. One exception is built in front of it: a later
+// match that contains an earlier one whole is promoted and wins as a whole,
+// so a term that names a part of a directory does not uncover the rest of
+// it. A later match that merely crosses an earlier one still loses, see
+// TestLayers_CrossingOverlapDropsTheLaterMatchWhole.
 func TestLayers_EarlierLayerWinsOverTheLongerLaterMatch(t *testing.T) {
 	host, rest := node(1), dir(2)
 	segment := host + "-" + rest
@@ -28,14 +30,13 @@ func TestLayers_EarlierLayerWinsOverTheLongerLaterMatch(t *testing.T) {
 	c := detect.NewComposite(nil, terms, paths)
 	got := c.Scan(text)
 	checkDisjoint(t, text, got)
-	if spans(got) != string(detect.KindHost)+":"+host {
-		t.Fatalf("composite = %q, want the term hit alone", spans(got))
+	if spans(got) != string(detect.KindPathSegment)+":"+segment {
+		t.Fatalf("composite = %q, want the containing segment promoted", spans(got))
 	}
 	out := roundTrip(t, text, c)
-	if !strings.Contains(out, rest) {
-		t.Fatalf("the rest of the segment is gone from the outbound text; the rule has changed")
+	if strings.Contains(out, rest) || strings.Contains(out, host) {
+		t.Fatalf("a part of the segment leaves in the clear: %q", out)
 	}
-	t.Logf("of the %d bytes of the segment, the %d bytes outside the term hit leave unchanged", len(segment), len(rest))
 }
 
 // Two layers that report exactly the same span: the earlier one decides the
@@ -98,10 +99,12 @@ func TestLayers_CrossingOverlapDropsTheLaterMatchWhole(t *testing.T) {
 
 // Merge has two strategies for the same rule and switches between them at 64
 // candidates. Both must accept the same hits, or a long log would be
-// filtered differently from a short one.
+// filtered differently from a short one. The host stands as a segment of
+// its own here, so the term hit and the path hit cover the same span and
+// the earlier layer decides.
 func TestLayers_PrecedenceHoldsAcrossTheBitsetThreshold(t *testing.T) {
-	host, rest := node(4), dir(5)
-	unit := abs("mnt", host+"-"+rest, "data") + " "
+	host := node(4)
+	unit := abs("mnt", host, "data") + " "
 	terms := lab.Host(t, host)
 	paths := lab.Paths(t, detect.PathsConfig{ReplaceUnknown: true})
 	c := detect.NewComposite(nil, terms, paths)

@@ -176,10 +176,9 @@ func TestPath_NetGapsForUnknownDirectories(t *testing.T) {
 // A segment that already looks like a pseudonym must not be replaced again,
 // or the second pass buries the first.
 func TestPath_SegmentAlreadyShapedLikeAPseudonym(t *testing.T) {
-	g := gen(t)
 	d := newPaths(t, detect.PathsConfig{ReplaceUnknown: true})
-	comp := detect.NewComposite(g.IsPseudonym, d)
 	tab := newTable(t)
+	comp := detect.NewComposite(tab.Knows, d)
 
 	once := forward("/home/admin/kunde/report.pdf", comp, tab)
 	twice := forward(once, comp, tab)

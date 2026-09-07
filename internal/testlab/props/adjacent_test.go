@@ -35,10 +35,11 @@ func TestProps_TouchingTermsGlueTheirPseudonyms(t *testing.T) {
 	}
 	for _, text := range texts {
 		gen := lab.Gen()
+		tab := mapping.NewTable(gen)
 		r := &rig{
 			gen: gen,
-			tab: mapping.NewTable(gen),
-			det: detect.NewComposite(gen.IsPseudonym, lab.Terms(t, terms...)),
+			tab: tab,
+			det: detect.NewComposite(tab.Knows, lab.Terms(t, terms...)),
 		}
 		mid := r.forwardOnce(text)
 		if mid == text {
@@ -60,10 +61,11 @@ func TestProps_SeparatedTermsBothComeBack(t *testing.T) {
 	}
 	for _, text := range []string{"[K1] [K2]", "[K1],[K2]", "[K1]\n[K2]"} {
 		gen := lab.Gen()
+		tab := mapping.NewTable(gen)
 		r := &rig{
 			gen: gen,
-			tab: mapping.NewTable(gen),
-			det: detect.NewComposite(gen.IsPseudonym, lab.Terms(t, terms...)),
+			tab: tab,
+			det: detect.NewComposite(tab.Knows, lab.Terms(t, terms...)),
 		}
 		mid := r.forwardOnce(text)
 		if out := lab.Back(mid, r.tab); out != text {

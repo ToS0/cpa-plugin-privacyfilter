@@ -103,10 +103,11 @@ func FuzzPropsRoundTripAnyTerm(f *testing.F) {
 		kind := kinds[int(kindIndex)%len(kinds)]
 
 		gen := lab.Gen()
+		tab := mapping.NewTable(gen)
 		r := &rig{
 			gen: gen,
-			tab: mapping.NewTable(gen),
-			det: detect.NewComposite(gen.IsPseudonym,
+			tab: tab,
+			det: detect.NewComposite(tab.Knows,
 				lab.Terms(t, detect.Term{Value: value, Kind: kind, IgnoreCase: ignoreCase})),
 		}
 		mid := r.forwardOnce(text)

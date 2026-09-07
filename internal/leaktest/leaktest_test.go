@@ -32,6 +32,10 @@ type pipeline struct {
 	out   []byte
 }
 
+// store keeps one table per conversation across the forward passes of this
+// package, as the plugin's store does.
+var store = mapping.NewStore(mapping.StoreConfig{})
+
 // forward runs the complete forward pass for one request body.
 func forward(t *testing.T, headers http.Header, body []byte) pipeline {
 	t.Helper()
@@ -61,9 +65,9 @@ func forward(t *testing.T, headers http.Header, body []byte) pipeline {
 	if err != nil {
 		t.Fatalf("NewPaths: %v", err)
 	}
-	det := detect.NewComposite(gen.IsPseudonym, terms, patterns, detect.NewPackyme(f, detect.PackymeConfig{IPv4: true, IPv6: true, Email: true}), paths)
+	table := store.Open(session.ID, gen)
+	det := detect.NewComposite(table.Knows, terms, patterns, detect.NewPackyme(f, detect.PackymeConfig{IPv4: true, IPv6: true, Email: true}), paths)
 
-	table := mapping.NewTable(gen)
 	out, _, err := payload.Walk(body, payload.WalkOptions{}, func(p payload.Path, text string) (string, bool) {
 		matches := det.Scan(text)
 		if len(matches) == 0 {
@@ -209,15 +213,20 @@ func TestDeterministic(t *testing.T) {
 }
 
 // TestIdempotent: running the forward pass over its own output changes
-// nothing; pseudonyms are excluded from detection.
+// nothing; the pseudonyms of the conversation's table are excluded from
+// detection, and the second pass adds no row.
 func TestIdempotent(t *testing.T) {
 	first := forward(t, nil, request(t, fixtures.SessionA))
+	rows := first.table.Len()
 	second := forward(t, nil, first.out)
 	if !bytes.Equal(first.out, second.out) {
 		t.Fatal("forward pass over its own output is not a no-op")
 	}
-	if second.table.Len() != 0 {
-		t.Fatalf("second pass created %d table entries, want 0", second.table.Len())
+	if second.table != first.table {
+		t.Fatal("the second pass of the conversation got another table")
+	}
+	if second.table.Len() != rows {
+		t.Fatalf("second pass grew the table from %d to %d entries", rows, second.table.Len())
 	}
 }
 

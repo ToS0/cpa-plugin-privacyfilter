@@ -1,26 +1,25 @@
 package layers
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/rheodev/cpa-plugin-privacyfilter/internal/testlab/lab"
 
 	"github.com/rheodev/cpa-plugin-privacyfilter/detect"
+	"github.com/rheodev/cpa-plugin-privacyfilter/mapping"
 	"github.com/rheodev/cpa-plugin-privacyfilter/pseudo"
 )
 
-// Exclude is applied to every layer, the maintained term list included, so a
-// term whose value carries the shape of a pseudonym is dropped like any other
-// match of that shape: an address out of the marker range the address
-// pseudonyms live in, a hardware address out of the locally administered
-// range the MAC pseudonyms live in. That is the documented rule and it is no
-// hole in the term list, because the other half of it sits in the wiring: the
-// plugin refuses such a term while it reads the configuration and names the
-// value in the error, so a term the composite would ignore never reaches a
-// running filter. The address renderer states the requirement; this test
-// holds the half the detect package answers for.
-func TestLayers_ATermThatLooksLikeAPseudonymIsDropped(t *testing.T) {
+// Exclude judges by the conversation's mapping table, not by the shape of a
+// value. A term whose value lies in the range a kind draws its pseudonyms
+// from, an address out of the carrier-grade NAT range or a hardware address
+// with the locally administered prefix, is therefore replaced like any
+// other, and the table never hands such a value out as the pseudonym of
+// something else. The shape test of the generator still exists for its own
+// output and is not the exclude any more.
+func TestLayers_ATermInThePseudonymRangeIsReplaced(t *testing.T) {
 	g := lab.Gen()
 	addr := lab.V4(100, 100, 20, 5)
 	mac := lab.MAC(0x02, 0x42, 0xac, 0x11, 0x00, 0x02)
@@ -33,38 +32,54 @@ func TestLayers_ATermThatLooksLikeAPseudonymIsDropped(t *testing.T) {
 		detect.Term{Value: mac, Kind: detect.KindMAC},
 	)
 	text := "ssh " + addr + " hw " + mac
-	c := detect.NewComposite(g.IsPseudonym, terms)
-	if got := c.Scan(text); got != nil {
-		t.Fatalf("composite = %s, want nothing: both term hits carry the shape of a pseudonym", where(got))
+	tab := lab.Table()
+	c := detect.NewComposite(tab.Knows, terms)
+	got := c.Scan(text)
+	if len(got) != 2 {
+		t.Fatalf("composite = %s, want both term hits", where(got))
 	}
-	if out := roundTrip(t, text, c); out != text {
-		t.Fatalf("the outbound text changed although every hit was excluded")
+	out := lab.Forward(text, c, tab)
+	if strings.Contains(out, addr) || strings.Contains(out, mac) {
+		t.Fatalf("a term in the pseudonym range leaves in the clear: %q", out)
+	}
+	if back := lab.Back(out, tab); back != text {
+		t.Fatalf("round trip returned %q, want %q", back, text)
+	}
+	// A second pass over the output changes nothing: the table knows its
+	// own pseudonyms.
+	if again := lab.Forward(out, c, tab); again != out {
+		t.Fatalf("second pass changed the text: %q -> %q", out, again)
 	}
 }
 
-// The same value under a kind of its own: the shape test asks every renderer
-// and does not read the declared kind, so a term is dropped whatever kind it
-// carries. The wiring's refusal is kind-agnostic for the same reason, so
-// nothing gets past it through a mislabelled kind either.
-func TestLayers_TheShapeTestIgnoresTheDeclaredKind(t *testing.T) {
-	g := lab.Gen()
+// The table refuses to hand out a pseudonym that equals a value it holds as
+// an original, or a literal the plugin's term list names, so the same token
+// never stands in a text with two meanings. The collision counter moves
+// past such a value like past a taken pseudonym.
+func TestLayers_ATermIsNeverHandedOutAsAPseudonym(t *testing.T) {
+	tab := lab.Table()
 	addr := lab.V4(100, 100, 20, 6)
-	terms := lab.Terms(t, detect.Term{Value: addr, Kind: detect.KindHost})
-	text := "ssh " + addr
-	if got := detect.NewComposite(g.IsPseudonym, terms).Scan(text); got != nil {
-		t.Fatalf("composite = %s, want nothing reported", where(got))
+	tab.SetAvoid(func(p string) bool { return p == addr })
+	// A generator that returns the avoided value first.
+	fake := &fixedGen{first: addr}
+	tab2 := mappingTableWith(fake)
+	tab2.SetAvoid(func(p string) bool { return p == addr })
+	if got := tab2.Lookup(detect.KindIPv4, lab.V4(10, 0, 0, 1)); got == addr {
+		t.Fatalf("the avoided value %q was handed out as a pseudonym", addr)
 	}
-	t.Logf("a term of kind %q whose value has the shape of an %q pseudonym is dropped",
-		detect.KindHost, detect.KindIPv4)
+	own := tab2.Lookup(detect.KindIPv4, addr)
+	if own == addr {
+		t.Fatalf("a value was mapped onto itself")
+	}
+	_ = tab
 }
 
 // An excluded hit keeps its rank and shields its span against the later
-// layers. That is what keeps a second forward pass a no-op. It also means
-// that a real value which merely looks like a pseudonym protects everything
-// around it that a later layer would have replaced: here the customer
-// directory that carries the address in its name.
+// layers. That is what keeps a second forward pass a no-op. With the table
+// as the exclude only a pseudonym the table produced shields anything; a
+// real value that merely looks like one, the node address in the name of a
+// customer directory, shields nothing, and the directory is replaced.
 func TestLayers_AnExcludedHitShieldsTheSegmentAroundIt(t *testing.T) {
-	skipOpenFinding(t)
 	g := lab.Gen()
 	addr := lab.V4(100, 100, 20, 7)
 	customer := dir(12)
@@ -73,33 +88,40 @@ func TestLayers_AnExcludedHitShieldsTheSegmentAroundIt(t *testing.T) {
 
 	patterns := lab.Patterns(t, detect.PatternsConfig{IPv4: true})
 	paths := lab.Paths(t, detect.PathsConfig{ReplaceUnknown: true})
+	tab := lab.Table()
 
-	// The path net alone protects the whole segment: its value is the
-	// segment, and that is not the shape of any pseudonym.
-	alone := detect.NewComposite(g.IsPseudonym, paths)
-	if got := alone.Scan(text); len(got) != 1 || got[0].Value != segment {
-		t.Fatalf("path layer alone = %q, want the whole segment", spans(got))
+	// The real address inside the segment is not a pseudonym of the table,
+	// so it shields nothing: the segment that contains it is promoted and
+	// replaced whole.
+	c := detect.NewComposite(tab.Knows, patterns, paths)
+	got := c.Scan(text)
+	if len(got) != 1 || got[0].Value != segment {
+		t.Fatalf("composite = %q, want the whole segment", spans(got))
 	}
-	if out := roundTrip(t, text, alone); strings.Contains(out, customer) {
-		t.Fatalf("the path layer alone leaves the directory name in the text")
+	out := lab.Forward(text, c, tab)
+	if strings.Contains(out, customer) || strings.Contains(out, addr) {
+		t.Fatalf("a part of the segment leaves in the clear: %q", out)
+	}
+	if back := lab.Back(out, tab); back != text {
+		t.Fatalf("round trip returned %q, want %q", back, text)
 	}
 
-	// With the structural layer in front, its hit on the address is excluded
-	// and shields the segment, so nothing at all is replaced.
-	c := detect.NewComposite(g.IsPseudonym, patterns, paths)
-	if got := c.Scan(text); got != nil {
-		t.Fatalf("composite = %q, want nothing reported", spans(got))
+	// A pseudonym of the table inside a segment does shield it: the
+	// segment around the plugin's own output is not replaced again.
+	p := tab.Lookup(detect.KindIPv4, lab.V4(10, 9, 8, 7))
+	if !g.IsPseudonym(p) {
+		t.Fatalf("the generator's output %q is not a pseudonym shape", p)
 	}
-	out := roundTrip(t, text, c)
-	if strings.Contains(out, customer) {
-		t.Fatalf("the excluded address shields the segment: the directory name of %d bytes leaves in the clear", len(customer))
+	shielded := abs("mnt", customer+"-"+p, "data")
+	if got := c.Scan(shielded); got != nil {
+		t.Fatalf("composite = %q over the plugin's own output, want nothing", spans(got))
 	}
 }
 
-// The person kind shows that the term list can be honoured: the plugin
-// builds its renderers from the list, a name on it leaves the pool, and the
-// shape test then no longer claims it. The address and MAC kinds have no
-// such door.
+// The person kind has a door of its own besides the table: the plugin
+// builds its renderers from the term list, a name on it leaves the pool, and
+// the shape test then no longer claims it. So a listed name is never the
+// pseudonym of another person.
 func TestLayers_ThePersonKindAlreadyHonoursTheTermList(t *testing.T) {
 	g := lab.Gen()
 	name := g.Pseudonym(detect.KindPerson, node(13), 0)
@@ -148,3 +170,16 @@ func TestLayers_NestedCompositeLosesTheShield(t *testing.T) {
 	}
 	t.Logf("nested in a second composite the excluded hit no longer shields its span")
 }
+
+// fixedGen returns first for attempt 0 and a distinct token afterwards, so a
+// test can force the table onto an avoided value.
+type fixedGen struct{ first string }
+
+func (f *fixedGen) Pseudonym(kind detect.Kind, value string, attempt int) string {
+	if attempt == 0 {
+		return f.first
+	}
+	return string(kind) + ":" + value + ":" + strconv.Itoa(attempt)
+}
+
+func mappingTableWith(g mapping.Generator) *mapping.Table { return mapping.NewTable(g) }

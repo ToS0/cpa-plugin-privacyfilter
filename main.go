@@ -255,25 +255,30 @@ func (p *privacyFilterPlugin) initPseudonymize() error {
 		}
 	}
 
-	// shape checks a literal term against the pseudonym shapes. The
-	// renderers are stateless and the shapes do not depend on the salt, so
-	// a generator with an empty salt answers for every conversation.
+	// A literal that lies in the range a kind draws its pseudonyms from, an
+	// address out of 100.64.0.0/10 or a MAC with the locally administered
+	// prefix, is replaced like any other value: the forward pass excludes
+	// what the conversation's table knows, not what looks like a pseudonym.
+	// The table in turn never hands such a literal out as the pseudonym of
+	// another value, see isTermLiteral and mapping.Table.SetAvoid. The one
+	// value that cannot be replaced is a network that covers the whole range
+	// its pseudonyms are drawn from: masked into the range it is itself,
+	// on every attempt, and the table would spin. shape answers for every
+	// conversation, since the renderers do not depend on the salt.
 	shape := pseudo.NewGenerator(secret, nil, renderers).WithNetworks(p.networks)
+	p.termLiterals = make(map[string]bool, len(entries))
 	terms := make([]detect.Term, 0, len(entries))
 	for i, t := range entries {
 		kind := detect.Kind(t.Kind)
 		if !kind.Valid() {
 			return fmt.Errorf("privacyfilter: terms[%d]: invalid kind %q", i, t.Kind)
 		}
-		// A literal that is its own pseudonym would never be replaced: the
-		// composite excludes pseudonym shapes from detection, whatever kind
-		// the term declares, so the forward pass stays idempotent. That
-		// covers an address in 100.64.0.0/10 and a network inside the
-		// marker prefixes; a name from the built-in list has been taken
-		// out of the list above and no longer counts as a shape. Refusing
-		// here is the check the pseudo package delegates to the wiring.
-		if t.Value != "" && shape.IsPseudonym(t.Value) {
-			return fmt.Errorf("privacyfilter: terms[%d]: %q has the shape of a pseudonym and could never be replaced; choose another value or leave it out", i, t.Value)
+		if t.Value != "" {
+			p.termLiterals[t.Value] = true
+		}
+		if t.Value != "" && kind == detect.KindCIDR &&
+			shape.Pseudonym(kind, t.Value, 0) == t.Value && shape.Pseudonym(kind, t.Value, 1) == t.Value {
+			return fmt.Errorf("privacyfilter: terms[%d]: %q covers the range its pseudonyms are drawn from and would map onto itself; leave it out", i, t.Value)
 		}
 		terms = append(terms, detect.Term{
 			Value:      t.Value,

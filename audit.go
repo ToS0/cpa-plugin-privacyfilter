@@ -62,9 +62,10 @@ func newAuditLog(pluginDir, path string, maxBytes int64) (*auditLog, error) {
 const defaultAuditMaxBytes = 10 << 20
 
 // request records one forward pass: a header line with the request id,
-// source format, salt source and sizes, then one "map" line per table row,
-// sorted by kind and original so two runs over the same request produce
-// the same block.
+// source format, salt source and sizes, then one "map" line per row this
+// request added to the conversation's table, sorted by kind and original so
+// two runs over the same request produce the same block. A row an earlier
+// request of the conversation added is in that request's block already.
 func (a *auditLog) request(requestID string, res forwardResult, sourceFormat string, bodyBytes int) {
 	if a == nil {
 		return
@@ -72,9 +73,9 @@ func (a *auditLog) request(requestID string, res forwardResult, sourceFormat str
 	id := auditID(requestID)
 	var b strings.Builder
 	now := time.Now().Format(time.RFC3339)
-	fmt.Fprintf(&b, "%s\trequest\t%s\tformat=%s\tsession=%s\tbody=%d\tout=%d\tdistinct=%d\n",
-		now, id, auditField(sourceFormat), res.session.Source, bodyBytes, len(res.out), res.table.Len())
-	entries := res.table.Entries()
+	fmt.Fprintf(&b, "%s\trequest\t%s\tformat=%s\tsession=%s\tbody=%d\tout=%d\tdistinct=%d\ttable=%d\n",
+		now, id, auditField(sourceFormat), res.session.Source, bodyBytes, len(res.out), len(res.added), res.table.Len())
+	entries := append([]mapping.Entry(nil), res.added...)
 	sort.Slice(entries, func(i, j int) bool {
 		if entries[i].Kind != entries[j].Kind {
 			return entries[i].Kind < entries[j].Kind
@@ -88,20 +89,17 @@ func (a *auditLog) request(requestID string, res forwardResult, sourceFormat str
 }
 
 // complete records the end of a request: one "restored" line per pseudonym
-// the return path swapped back, with its count, sorted by pseudonym, and a
-// closing "complete" line with the outcome and the totals. A request whose
-// response never repeated a pseudonym gets the closing line alone.
-func (a *auditLog) complete(requestID string, done pluginapi.RequestCompletion, table *mapping.Table) {
+// the return path swapped back while the request was bound, with its count,
+// sorted by pseudonym, and a closing "complete" line with the outcome and
+// the totals. A request whose response never repeated a pseudonym gets the
+// closing line alone.
+func (a *auditLog) complete(requestID string, done pluginapi.RequestCompletion, table *mapping.Table, hits map[string]int) {
 	if a == nil {
 		return
 	}
 	id := auditID(requestID)
 	var b strings.Builder
 	now := time.Now().Format(time.RFC3339)
-	var hits map[string]int
-	if table != nil {
-		hits = table.RestoredHits()
-	}
 	keys := make([]string, 0, len(hits))
 	for k := range hits {
 		keys = append(keys, k)

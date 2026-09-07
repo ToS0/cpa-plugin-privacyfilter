@@ -111,7 +111,7 @@ func TestRange_GeneratorStaysInsideItsRange(t *testing.T) {
 
 	// A second pass over an already replaced text must not replace again.
 	once := forward(v4(10, 1, 2, 3), d, tab)
-	comp := detect.NewComposite(gen.IsPseudonym, d)
+	comp := detect.NewComposite(tab.Knows, d)
 	twice := forward(once, comp, tab)
 	if twice != once {
 		t.Errorf("the composite replaced its own output: %q -> %q", once, twice)
@@ -128,16 +128,14 @@ func TestRange_GeneratorStaysInsideItsRange(t *testing.T) {
 // The ranges the generator draws from are not empty in the real world.
 // Carrier-grade NAT space is what Tailscale hands out, unique local addresses
 // are what most home networks use, and the locally administered MAC prefix is
-// what Docker gives every container. If the exclude decides by shape alone,
-// those real values are taken for pseudonyms and never replaced.
+// what Docker gives every container. The exclude decides by the table, not
+// by shape, so those real values are replaced like any other.
 func TestRange_RealValuesInsideThePseudonymSpace(t *testing.T) {
-	skipOpenFinding(t)
 	gen := pseudo.NewGenerator([]byte("test-secret-not-a-real-one"), []byte("test-salt"), pseudo.DefaultRenderers())
 	d, err := detect.NewPatterns(detect.PatternsConfig{IPv4: true, IPv6: true, MAC: true})
 	if err != nil {
 		t.Skipf("NewPatterns: %v", err)
 	}
-	comp := detect.NewComposite(gen.IsPseudonym, d)
 
 	cases := []struct {
 		name  string
@@ -151,6 +149,7 @@ func TestRange_RealValuesInsideThePseudonymSpace(t *testing.T) {
 	}
 	for _, c := range cases {
 		tab := mapping.NewTable(gen)
+		comp := detect.NewComposite(tab.Knows, d)
 		mid := forward(c.value, comp, tab)
 		shaped := gen.IsPseudonym(c.value)
 		if mid == c.value {

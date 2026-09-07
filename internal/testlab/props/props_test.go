@@ -60,8 +60,8 @@ func fixturePatterns() detect.PatternsConfig {
 }
 
 // rig is one generator with its table and one detector over it. The exclude
-// is the generator's own shape test, the way the plugin wires it; without it
-// a second forward pass would replace the pseudonyms of the first.
+// is the table's own knowledge, the way the plugin wires it; without it a
+// second forward pass would replace the pseudonyms of the first.
 type rig struct {
 	gen *pseudo.Generator
 	tab *mapping.Table
@@ -72,10 +72,11 @@ type rig struct {
 func newRig(t *testing.T, layers ...detect.Detector) *rig {
 	t.Helper()
 	gen := lab.Gen()
+	tab := mapping.NewTable(gen)
 	return &rig{
 		gen: gen,
-		tab: mapping.NewTable(gen),
-		det: detect.NewComposite(gen.IsPseudonym, layers...),
+		tab: tab,
+		det: detect.NewComposite(tab.Knows, layers...),
 	}
 }
 
@@ -127,14 +128,12 @@ func checkNoOriginals(t *testing.T, r *rig, text, mid string) {
 	}
 }
 
-// checkRoundTrip asserts that the return direction undoes the forward one. It
-// runs after the table is complete, because Restorer freezes the rows on its
-// first call.
+// checkRoundTrip asserts that the return direction undoes the forward one.
 //
 // A text that already carries a pseudonym of this table cannot close the
-// circle: the return pass resolves what the forward pass never replaced. That
-// is the known finding about a pseudonym in the conversation history, so the
-// case is skipped here rather than counted twice.
+// circle: the return pass resolves what the forward pass never replaced,
+// and rightly so, since the table belongs to the conversation. The case is
+// skipped here.
 func checkRoundTrip(t *testing.T, r *rig, text, mid string) {
 	t.Helper()
 	if lab.Back(text, r.tab) != text {

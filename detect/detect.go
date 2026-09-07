@@ -351,12 +351,13 @@ func hasTokenBoundaries(text string, start, end int) bool {
 
 // Composite runs several detectors over the same text, in order of
 // precedence, and merges their hits. Exclude, when set, drops every match
-// whose Value it accepts; the plugin passes pseudo.IsPseudonym so a text that
-// already contains pseudonyms is left alone (idempotence), and so a pseudonym
-// that happens to look like a real value, such as an address in 100.64.0.0/10,
-// is never detected and replaced a second time. An excluded match still
-// takes part in the precedence: it shields its span from the matches of
-// later layers, see Match.excluded.
+// whose Value it accepts; the plugin passes the Knows method of the
+// conversation's mapping table, so a pseudonym the plugin itself produced is
+// left alone (idempotence over the history of a conversation) while a real
+// value that merely has the shape of one, such as a node address out of the
+// carrier-grade NAT range, is replaced like any other. An excluded match
+// still takes part in the precedence: it shields its span from the matches
+// of later layers, see Match.excluded.
 type Composite struct {
 	Layers  []Detector
 	Exclude func(value string) bool
@@ -373,23 +374,53 @@ func NewComposite(exclude func(value string) bool, layers ...Detector) *Composit
 // Name implements Detector.
 func (c *Composite) Name() string { return "composite" }
 
-// promoteAddresses returns the e-mail matches of later layers that contain
-// a match of an earlier layer, so that Merge accepts them ahead of every
-// layer. Without it the precedence of the term list splits an address: the
-// domain term wins over the longer e-mail match of the structural patterns,
-// the local part stays in clear text, and "ingrid.muster@" leaves next to a
-// domain pseudonym. An address that carries a confidential domain or name
-// is confidential as a whole and is replaced as one KindEmail. An excluded
-// inner match, a pseudonym of an earlier pass, does not promote: the
-// address around it is already the plugin's own output.
-func promoteAddresses(layers [][]Match) []Match {
+// promoteContaining returns the matches of later layers that strictly
+// contain a match of an earlier layer, so that Merge accepts them ahead of
+// every layer. Without it the precedence of the term list breaks a longer
+// value apart: a term that names the customer wins over the directory
+// "customer-4711" the path layer would have replaced whole, and the case
+// number leaves in clear text; a domain term wins over the e-mail address
+// around it and the local part leaves; a short term inside a dotted quad
+// leaves the remaining octets standing. A value that carries a confidential
+// part is confidential as a whole and is replaced as one match of the
+// containing kind. Four rules keep the precedence otherwise intact. A match
+// over exactly the same span is not promoted, so the earlier layer still
+// decides the kind of a value both report. An excluded inner match, a
+// pseudonym of an earlier pass, does not promote, because the value around
+// it is already the plugin's own output and must stay as it is. A match of
+// KindSecret is never promoted: the credential rules of the original
+// detection cut loose spans such as "Host-Key <fingerprint>. ", and an
+// opaque token in place of a structured value would take from the model
+// what the kind of the inner match preserves. And the containing match must
+// stand on token boundaries in the text, or it is a partial hit itself.
+//
+// The earlier matches are sorted by Start once, and for every later match
+// only the earlier ones that begin inside its span are looked at, so the
+// cost is linear in the length of the text for the detectors of this
+// plugin.
+func promoteContaining(text string, layers [][]Match) []Match {
 	var promoted []Match
+	var earlier []Match
 	for li := 1; li < len(layers); li++ {
+		if len(layers[li-1]) > 0 {
+			for _, n := range layers[li-1] {
+				if !n.excluded && n.Start >= 0 && n.Start < n.End {
+					earlier = append(earlier, n)
+				}
+			}
+			sort.SliceStable(earlier, func(i, j int) bool { return earlier[i].Start < earlier[j].Start })
+		}
+		if len(earlier) == 0 {
+			continue
+		}
 		for _, m := range layers[li] {
-			if m.Kind != KindEmail || m.excluded {
+			if m.excluded || m.Kind == KindSecret || m.Start < 0 || m.Start >= m.End || m.End > len(text) {
 				continue
 			}
-			if containsEarlier(layers[:li], m) {
+			if !hasTokenBoundaries(text, m.Start, m.End) {
+				continue
+			}
+			if containsEarlier(earlier, m) {
 				promoted = append(promoted, m)
 			}
 		}
@@ -397,14 +428,14 @@ func promoteAddresses(layers [][]Match) []Match {
 	return promoted
 }
 
-// containsEarlier reports whether m fully contains a non-excluded match of
-// one of the given layers.
-func containsEarlier(earlier [][]Match, m Match) bool {
-	for _, layer := range earlier {
-		for _, n := range layer {
-			if !n.excluded && n.Start >= m.Start && n.End <= m.End && n.Start < n.End {
-				return true
-			}
+// containsEarlier reports whether m strictly contains one of the matches in
+// earlier, which are sorted by Start.
+func containsEarlier(earlier []Match, m Match) bool {
+	i := sort.Search(len(earlier), func(i int) bool { return earlier[i].Start >= m.Start })
+	for ; i < len(earlier) && earlier[i].Start < m.End; i++ {
+		n := earlier[i]
+		if n.End <= m.End && n.Len() < m.Len() {
+			return true
 		}
 	}
 	return false
@@ -438,7 +469,7 @@ func (c *Composite) Scan(text string) []Match {
 		}
 		layers = append(layers, hits)
 	}
-	merged := Merge(append([][]Match{promoteAddresses(layers)}, layers...)...)
+	merged := Merge(append([][]Match{promoteContaining(text, layers)}, layers...)...)
 	if excluded == 0 {
 		return merged
 	}

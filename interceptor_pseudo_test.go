@@ -13,6 +13,7 @@ import (
 
 	"github.com/rheodev/cpa-plugin-privacyfilter/detect"
 	"github.com/rheodev/cpa-plugin-privacyfilter/internal/fixtures"
+	"github.com/rheodev/cpa-plugin-privacyfilter/mapping"
 	"github.com/rheodev/cpa-plugin-privacyfilter/pseudo"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 	"gopkg.in/yaml.v3"
@@ -21,6 +22,16 @@ import (
 // newPseudoPlugin builds the plugin from a YAML document the way the host does,
 // with a secret file in a temporary directory. override replaces top-level keys
 // of the document, so a single test can switch mode, on_error or the limits.
+// tableOf returns the table bound to requestID or fails the test.
+func (p *privacyFilterPlugin) tableOf(t *testing.T, requestID string) *mapping.Table {
+	t.Helper()
+	table, err := p.store.Get(requestID)
+	if err != nil {
+		t.Fatalf("store.Get(%s): %v", requestID, err)
+	}
+	return table
+}
+
 func newPseudoPlugin(t *testing.T, override map[string]any) *privacyFilterPlugin {
 	t.Helper()
 
@@ -392,53 +403,74 @@ func TestPseudonymizeRequest_FilenamesLeftToTerms(t *testing.T) {
 	}
 }
 
-// TestPseudonymizeRequest_SecondPassOnlyTouchesRecompositions states what
-// idempotence currently amounts to: no original value is detected a second
-// time, because Exclude knows every pseudonym, but a replacement can compose a
-// new structural value out of pseudonyms.
-//
-// The corpus has one such case. "markus@wendler.de" is covered by two entries
-// of the maintained list, the person "markus" and the domain "wendler.de", and
-// the maintained list wins over the structural email pattern by design, so the
-// address comes out as "<name>@d-<hex>.invalid" - itself a well-formed address
-// that the email pattern then finds on a second pass. The forward path is
-// unaffected, since a client never sends pseudonyms back: the return path
-// restores the originals first. This test therefore asserts the property that
-// holds, and it is the reason TestIdempotent in internal/leaktest fails.
-func TestPseudonymizeRequest_SecondPassOnlyTouchesRecompositions(t *testing.T) {
+// TestPseudonymizeRequest_SecondPassIsQuiet: the mapping table belongs to
+// the conversation, and the composite excludes what the table knows. A
+// second request of the same conversation whose body is the first one's
+// output therefore replaces nothing and adds no row: every pseudonym in it
+// is one the table produced. The address the fixture composes out of a
+// person and a domain pseudonym is a pseudonym of the table as well, since
+// the promotion replaces the whole address as one e-mail row.
+func TestPseudonymizeRequest_SecondPassIsQuiet(t *testing.T) {
 	p := newPseudoPlugin(t, nil)
 	body, _ := fixtureBody(t, fixtures.SessionA)
 	first := beforeAuth(t, p, "req-1", body)
+	rows := p.tableOf(t, "req-1").Len()
+	if rows == 0 {
+		t.Fatal("the first pass replaced nothing")
+	}
 	second := beforeAuth(t, p, "req-2", first.Body)
+	if second.Body != nil && !bytes.Equal(first.Body, second.Body) {
+		t.Fatalf("the second pass changed the body:\n%s", second.Body)
+	}
+	if got := p.tableOf(t, "req-2").Len(); got != rows {
+		t.Fatalf("the second pass grew the conversation's table from %d to %d rows", rows, got)
+	}
+}
 
-	before, err := p.store.Get("req-1")
+// TestPseudonymizeRequest_TableFollowsTheConversation: two requests of one
+// conversation share a table, so a pseudonym the model repeats from an
+// earlier turn resolves in a later one; another conversation has a table
+// of its own, and a request whose completion arrived leaves the table
+// with the conversation.
+func TestPseudonymizeRequest_TableFollowsTheConversation(t *testing.T) {
+	p := newPseudoPlugin(t, nil)
+	body, _ := fixtureBody(t, fixtures.SessionA)
+	beforeAuth(t, p, "req-1", body)
+	first := p.tableOf(t, "req-1")
+	host := first.Lookup(detect.KindHost, "athene.lan")
+	if err := p.HandleRequestComplete(context.Background(), pluginapi.RequestCompletion{RequestID: "req-1", Outcome: pluginapi.RequestCompletionSucceeded}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.store.Get("req-1"); err == nil {
+		t.Fatal("the binding of req-1 survived its completion")
+	}
+
+	// The second request carries only the pseudonym, as a history does
+	// after the model repeated it.
+	_, req := fixtureBody(t, fixtures.SessionA)
+	req["messages"] = []any{map[string]any{"role": "user", "content": "prüfe " + host}}
+	later, err := json.Marshal(req)
 	if err != nil {
-		t.Fatalf("store.Get(req-1): %v", err)
+		t.Fatal(err)
 	}
-	after, err := p.store.Get("req-2")
-	if err != nil {
-		t.Fatalf("store.Get(req-2): %v", err)
+	beforeAuth(t, p, "req-2", later)
+	second := p.tableOf(t, "req-2")
+	if second != first {
+		t.Fatal("the second request of the conversation got a table of its own")
+	}
+	answer := []byte(`{"id":"msg_2","type":"message","role":"assistant","content":[{"type":"text","text":"` + host + ` antwortet"}],"model":"claude-fable-5-1"}`)
+	restored := interceptResponse(t, p, "req-2", "claude", answer)
+	if !strings.Contains(string(restored.Body), "athene.lan") {
+		t.Fatalf("the pseudonym of the first request was not restored in the second: %s", restored.Body)
 	}
 
-	if after.Len() == 0 {
-		if second.Body != nil && !bytes.Equal(first.Body, second.Body) {
-			t.Fatal("the second pass replaced nothing but changed the body")
-		}
-		return
+	other, _ := fixtureBody(t, fixtures.SessionB)
+	beforeAuth(t, p, "req-3", other)
+	if p.tableOf(t, "req-3") == first {
+		t.Fatal("another conversation shares the table")
 	}
-
-	pseudonyms := before.Pseudonyms()
-	for _, e := range after.Entries() {
-		recomposed := false
-		for _, ps := range pseudonyms {
-			if strings.Contains(e.Original, ps) {
-				recomposed = true
-				break
-			}
-		}
-		if !recomposed {
-			t.Errorf("the second pass replaced %s %q, which carries no pseudonym of the first pass", e.Kind, e.Original)
-		}
+	if p.store.Len() != 2 {
+		t.Fatalf("store holds %d tables, want one per conversation", p.store.Len())
 	}
 }
 
@@ -583,53 +615,73 @@ func TestBuildPlugin_InvalidTermKindFails(t *testing.T) {
 	}
 }
 
-// TestBuildPlugin_PseudonymShapedTermFails: a literal that is its own
-// pseudonym would never be replaced, so registration refuses it. The
-// composite excludes pseudonym shapes from detection, which is what keeps the
-// forward pass idempotent, and the wiring is where the pseudo package
-// delegates the check.
-func TestBuildPlugin_PseudonymShapedTermFails(t *testing.T) {
+// TestBuildPlugin_TermInThePseudonymRangeIsReplaced: a term whose value
+// lies where a kind draws its pseudonyms from, a node address out of the
+// carrier-grade NAT range, a network inside it, an address under the marker
+// prefix or a token of the host shape, is accepted and replaced like any
+// other value. The exclude judges by the conversation's table, not by the
+// shape, so nothing takes such a value for the plugin's own output; and the
+// table never hands the value out as a pseudonym of something else. The one
+// refusal left is a network that covers the whole range: it can only map
+// onto itself.
+func TestBuildPlugin_TermInThePseudonymRangeIsReplaced(t *testing.T) {
 	cases := []struct {
-		name  string
-		value string
-		kind  string
-		ok    bool
+		name   string
+		value  string
+		kind   string
+		refuse bool
 	}{
 		{"cgnat address", "100.100.1.1", "ipv4", false},
-		{"cgnat network", "100.64.0.0/10", "cidr", false},
+		{"cgnat subnet", "100.100.0.0/16", "cidr", false},
+		{"whole cgnat range", "100.64.0.0/10", "cidr", true},
+		{"whole marker prefix", "fdff:5046:5346::/48", "cidr", true},
 		{"marker ula", "fdff:5046:5346::1", "ipv6", false},
 		{"host shaped", "h-0123456789ab", "host", false},
-		{"ordinary address", "10.13.7.42", "ipv4", true},
-		{"ordinary person", "markus", "person", true},
+		{"ordinary address", "10.13.7.42", "ipv4", false},
+		{"ordinary person", "markus", "person", false},
 		// A term equal to a built-in name is not refused: the entry is left
 		// out of the list for this plugin, whatever kind the term declares.
-		{"built-in person", pseudo.Names[0], "person", true},
-		{"built-in given name", strings.Fields(pseudo.Names[0])[0], "person", true},
-		{"name as host", pseudo.Names[0], "host", true},
+		{"built-in person", pseudo.Names[0], "person", false},
+		{"built-in given name", strings.Fields(pseudo.Names[0])[0], "person", false},
+		{"name as host", pseudo.Names[0], "host", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			path := filepath.Join(dir, pseudo.DefaultSecretFile)
-			if err := os.WriteFile(path, fixtures.Secret, 0o600); err != nil {
-				t.Fatalf("write secret: %v", err)
+			if tc.refuse {
+				dir := t.TempDir()
+				path := filepath.Join(dir, pseudo.DefaultSecretFile)
+				if err := os.WriteFile(path, fixtures.Secret, 0o600); err != nil {
+					t.Fatalf("write secret: %v", err)
+				}
+				raw, err := yaml.Marshal(map[string]any{
+					"mode":             string(ModePseudonymize),
+					"salt_secret_path": path,
+					"terms":            []any{map[string]any{"value": tc.value, "kind": tc.kind}},
+				})
+				if err != nil {
+					t.Fatalf("marshal config: %v", err)
+				}
+				_, err = buildPlugin(raw, dir, nil)
+				if err == nil || !strings.Contains(err.Error(), "map onto itself") {
+					t.Fatalf("buildPlugin(%q %s) = %v, want the self-mapping refusal", tc.value, tc.kind, err)
+				}
+				return
 			}
-			raw, err := yaml.Marshal(map[string]any{
-				"mode":             string(ModePseudonymize),
-				"salt_secret_path": path,
-				"terms":            []any{map[string]any{"value": tc.value, "kind": tc.kind}},
+			p := newPseudoPlugin(t, map[string]any{
+				"terms": []any{map[string]any{"value": tc.value, "kind": tc.kind}},
 			})
-			if err != nil {
-				t.Fatalf("marshal config: %v", err)
+			body := []byte(`{"model":"claude-fable-5-1","messages":[{"role":"user","content":"wert ` + tc.value + ` ende"}]}`)
+			resp := beforeAuth(t, p, "req-1", body)
+			if resp.Terminate {
+				t.Fatalf("request terminated: %s", resp.ResponseBody)
 			}
-			_, err = buildPlugin(raw, dir, nil)
-			switch {
-			case tc.ok && err != nil:
-				t.Fatalf("buildPlugin(%q %s) = %v, want success", tc.value, tc.kind, err)
-			case !tc.ok && err == nil:
-				t.Fatalf("buildPlugin(%q %s) succeeded, want a refusal", tc.value, tc.kind)
-			case !tc.ok && !strings.Contains(err.Error(), "shape of a pseudonym"):
-				t.Fatalf("buildPlugin(%q %s) = %v, want the shape refusal", tc.value, tc.kind, err)
+			if resp.Body == nil || bytes.Contains(resp.Body, []byte(tc.value)) {
+				t.Fatalf("the term %q was not replaced: %s", tc.value, resp.Body)
+			}
+			table := p.tableOf(t, "req-1")
+			e, ok := table.Original(tc.value)
+			if ok {
+				t.Fatalf("the term %q was handed out as the pseudonym of %q", tc.value, e.Original)
 			}
 		})
 	}

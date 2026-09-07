@@ -24,10 +24,11 @@ import (
 func regexRig(t *testing.T, expr string, kind detect.Kind) *rig {
 	t.Helper()
 	gen := lab.Gen()
+	tab := mapping.NewTable(gen)
 	return &rig{
 		gen: gen,
-		tab: mapping.NewTable(gen),
-		det: detect.NewComposite(gen.IsPseudonym,
+		tab: tab,
+		det: detect.NewComposite(tab.Knows,
 			lab.Terms(t, detect.Term{Regex: expr, Kind: kind})),
 	}
 }
@@ -107,7 +108,8 @@ func FuzzPropsRoundTripRegexTerm(f *testing.F) {
 			return // not a valid expression; the configuration layer rejects it
 		}
 		gen := lab.Gen()
-		r := &rig{gen: gen, tab: mapping.NewTable(gen), det: detect.NewComposite(gen.IsPseudonym, det)}
+		tab := mapping.NewTable(gen)
+		r := &rig{gen: gen, tab: tab, det: detect.NewComposite(tab.Knows, det)}
 		mid := r.forwardOnce(text)
 		checkRoundTrip(t, r, text, mid)
 	})

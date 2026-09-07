@@ -57,6 +57,14 @@ type privacyFilterPlugin struct {
 	audit *auditLog
 	// termCount is the size of the merged term list, for the registration log.
 	termCount int
+	// termLiterals are the literal values of the term list. No pseudonym
+	// of a conversation may equal one of them, see mapping.Table.SetAvoid.
+	termLiterals map[string]bool
+}
+
+// isTermLiteral reports whether s is a literal of the term list.
+func (p *privacyFilterPlugin) isTermLiteral(s string) bool {
+	return p.termLiterals[s]
 }
 
 var _ pluginapi.RequestInterceptor = (*privacyFilterPlugin)(nil)
@@ -218,7 +226,10 @@ func (p *privacyFilterPlugin) editText(text *string) bool {
 type forwardResult struct {
 	out     []byte
 	changed bool
+	// table is the conversation's table, with the rows of this request
+	// added; added are the rows this request put in, for the audit log.
 	table   *mapping.Table
+	added   []mapping.Entry
 	session pseudo.Session
 	counts  map[detect.Kind]int
 }
@@ -242,18 +253,23 @@ func (p *privacyFilterPlugin) pseudonymizeRequest(req pluginapi.RequestIntercept
 
 	res, err := p.runForward(req.Headers, body)
 	if err != nil {
+		// A table opened for this request alone is dropped again, so a
+		// blocked request leaves nothing behind; a table the conversation
+		// already had stays.
+		p.store.Discard(res.table)
 		return p.forwardFailure(err)
 	}
 
 	if res.changed {
 		resp.Body = res.out
 	}
-	// The table is stored even when nothing was replaced, so the return path
-	// finds an empty table instead of none and does not log a missing one.
-	// An empty RequestID cannot be correlated with a response, and two
-	// requests would share the key, so that case is skipped.
+	// The request is bound to its conversation's table even when nothing
+	// was replaced, so the return path finds the table instead of none and
+	// restores what the model repeats from earlier turns. An empty
+	// RequestID cannot be correlated with a response, and two requests
+	// would share the key, so that case is skipped.
 	if req.RequestID != "" {
-		p.store.Put(req.RequestID, res.table)
+		p.store.Bind(req.RequestID, res.table)
 	}
 	p.audit.request(req.RequestID, res, req.SourceFormat, len(body))
 
@@ -261,7 +277,7 @@ func (p *privacyFilterPlugin) pseudonymizeRequest(req pluginapi.RequestIntercept
 		"source_format":  req.SourceFormat,
 		"session_source": string(res.session.Source),
 		"replacements":   formatCounts(res.counts),
-		"distinct":       res.table.Len(),
+		"distinct":       len(res.added),
 		"body_bytes":     len(body),
 		"out_bytes":      len(res.out),
 	}).Info("privacyfilter: request pseudonymized")
@@ -282,8 +298,15 @@ func (p *privacyFilterPlugin) runForward(headers http.Header, body []byte) (res 
 		return res, errors.New("privacyfilter: pseudonym generator unavailable")
 	}
 
-	det := detect.NewComposite(gen.IsPseudonym, p.layers...)
-	table := mapping.NewTable(gen)
+	// The table belongs to the conversation and outlives the request: the
+	// values of earlier turns are already in it, and the values of this one
+	// are added. The exclude is the table itself, not the shape of a
+	// pseudonym, so a value the plugin produced is left alone and a real
+	// value that merely looks like one, a node address out of the
+	// carrier-grade NAT range, is replaced.
+	table := p.store.Open(res.session.ID, gen)
+	table.SetAvoid(p.isTermLiteral)
+	det := detect.NewComposite(table.Knows, p.layers...)
 	counts := make(map[detect.Kind]int)
 	res.table = table
 	res.counts = counts
@@ -306,7 +329,14 @@ func (p *privacyFilterPlugin) runForward(headers http.Header, body []byte) (res 
 				continue
 			}
 			b.WriteString(text[prev:m.Start])
-			b.WriteString(table.Lookup(m.Kind, m.Value))
+			before := table.Len()
+			pseudonym := table.Lookup(m.Kind, m.Value)
+			if table.Len() > before {
+				if e, ok := table.Original(pseudonym); ok {
+					res.added = append(res.added, e)
+				}
+			}
+			b.WriteString(pseudonym)
 			prev = m.End
 			counts[m.Kind]++
 		}

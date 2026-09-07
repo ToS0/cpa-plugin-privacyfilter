@@ -11,12 +11,11 @@ import (
 )
 
 // The path layer with ReplaceUnknown is the net for the directory nobody put
-// on the term list. A term that hits inside such a directory takes the span
-// away from the net, and the rest of the segment leaves unchanged. Putting
-// the host name on the list therefore makes the protection of the directory
-// worse than leaving it off.
+// on the term list. A term that hits inside such a directory must not take
+// the span away from the net: the segment that contains the term is
+// promoted and replaced whole, so putting the host name on the list never
+// makes the protection of a directory worse than leaving it off.
 func TestLayers_TermInsideAnUnknownSegmentUncoversTheRest(t *testing.T) {
-	skipOpenFinding(t)
 	host, customer := node(7), dir(8)
 	segment := host + "-" + customer
 	text := abs("mnt", segment, "data")
@@ -33,12 +32,11 @@ func TestLayers_TermInsideAnUnknownSegmentUncoversTheRest(t *testing.T) {
 	}
 }
 
-// And on an address: a short term that falls inside a dotted quad takes the
-// span from the address pattern. What leaves is a broken address whose
-// remaining octets stand in the clear, and a model that reads an address
-// where none is.
+// And on an address: a short term that falls inside a dotted quad must not
+// take the span from the address pattern, or a broken address would leave
+// with its remaining octets in the clear. The containing address is
+// promoted and replaced whole.
 func TestLayers_TermInsideAnAddressBreaksItApart(t *testing.T) {
-	skipOpenFinding(t)
 	project := fmt.Sprintf("%d", 108)
 	addr := lab.V4(10, 108, 0, 7)
 	tail := fmt.Sprintf(".%d.%d", 0, 7)
@@ -55,8 +53,8 @@ func TestLayers_TermInsideAnAddressBreaksItApart(t *testing.T) {
 	c := detect.NewComposite(nil, terms, patterns)
 	got := c.Scan(text)
 	checkDisjoint(t, text, got)
-	if len(got) != 1 || got[0].Value != project {
-		t.Fatalf("composite = %q, want the short term hit", spans(got))
+	if len(got) != 1 || got[0].Value != addr {
+		t.Fatalf("composite = %q, want the containing address promoted", spans(got))
 	}
 	if with := roundTrip(t, text, c); strings.Contains(with, tail) {
 		t.Fatalf("the term of %d bytes breaks the address of %d bytes apart and its tail leaves in the clear",
@@ -72,7 +70,7 @@ func TestLayers_AddressInsideAPathKeepsItsKind(t *testing.T) {
 	text := abs("var", "log", addr, "access.log")
 	patterns := lab.Patterns(t, detect.PatternsConfig{IPv4: true})
 	paths := lab.Paths(t, detect.PathsConfig{ReplaceUnknown: true})
-	c := detect.NewComposite(lab.Gen().IsPseudonym, patterns, paths)
+	c := detect.NewComposite(nil, patterns, paths)
 
 	got := c.Scan(text)
 	checkDisjoint(t, text, got)
@@ -93,7 +91,7 @@ func TestLayers_NetworkSpanningASlashInsideAPath(t *testing.T) {
 	text := abs("etc", network, "notes")
 	patterns := lab.Patterns(t, detect.PatternsConfig{CIDR: true})
 	paths := lab.Paths(t, detect.PathsConfig{ReplaceUnknown: true})
-	c := detect.NewComposite(lab.Gen().IsPseudonym, patterns, paths)
+	c := detect.NewComposite(nil, patterns, paths)
 
 	got := c.Scan(text)
 	checkDisjoint(t, text, got)
@@ -123,8 +121,8 @@ func TestLayers_AllLayersRoundTripAndASecondPassIsQuiet(t *testing.T) {
 	)
 	patterns := lab.Patterns(t, detect.PatternsConfig{IPv4: true, MAC: true, Email: true})
 	paths := lab.Paths(t, detect.PathsConfig{ReplaceUnknown: true})
-	g := lab.Gen()
-	c := detect.NewComposite(g.IsPseudonym, terms, patterns, paths)
+	tab := lab.Table()
+	c := detect.NewComposite(tab.Knows, terms, patterns, paths)
 
 	text := strings.Join([]string{
 		"ssh " + host,
@@ -134,7 +132,6 @@ func TestLayers_AllLayersRoundTripAndASecondPassIsQuiet(t *testing.T) {
 	}, "\n")
 
 	checkDisjoint(t, text, c.Scan(text))
-	tab := lab.Table()
 	out := lab.Forward(text, c, tab)
 	for _, v := range []string{host, customer, addr, mac, person, domain} {
 		if strings.Contains(out, v) {

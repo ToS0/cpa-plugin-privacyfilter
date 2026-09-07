@@ -65,7 +65,7 @@ func TestForm_EveryKindKeepsItsShape(t *testing.T) {
 		{detect.KindSerial, "S4EWNF0M123456X", regexp.MustCompile(`^[A-Za-z0-9._/-]{6,64}$`)},
 		{detect.KindSecret, "hunter2hunter2hunter2", regexp.MustCompile(`^\S+$`)},
 	}
-	// Fill the whole table first: the restorer freezes on its first use.
+	// Fill the whole table first, then check every alias against its shape.
 	aliases := make([]string, len(cases))
 	for i, c := range cases {
 		aliases[i] = tab.Lookup(c.kind, c.value)

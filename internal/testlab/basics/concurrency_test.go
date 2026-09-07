@@ -94,8 +94,9 @@ func TestRace_StoreUnderLoad(t *testing.T) {
 	t.Logf("tables left: %d", st.Len())
 }
 
-// A long answer streams for longer than the table's lifetime. If the clock
-// alone decides, the rest of that answer reaches the user as pseudonyms.
+// A long answer streams for longer than the table's lifetime. Every chunk
+// reads the table, and every read counts as a use, so the table lives as
+// long as the answer runs.
 func TestStore_TableExpiresWhileTheAnswerRuns(t *testing.T) {
 	gen := pseudo.NewGenerator([]byte("test-secret-not-a-real-one"), []byte("test-salt"), pseudo.DefaultRenderers())
 	c := &clock{now: time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)}
@@ -106,20 +107,20 @@ func TestStore_TableExpiresWhileTheAnswerRuns(t *testing.T) {
 	for i := 0; i < 12; i++ {
 		c.advance(time.Minute)
 		st.Sweep()
-		_, err := st.Get("req-1")
-		if err != nil {
-			t.Logf("minute %2d: table gone (%v)", i+1, err)
-			if errors.Is(err, mapping.ErrTableNotFound) {
-				t.Logf("   -> from here on the answer reaches the user unrestored")
-			}
-			return
+		if _, err := st.Get("req-1"); err != nil {
+			t.Fatalf("minute %2d: table gone while the answer streams (%v)", i+1, err)
 		}
 	}
-	t.Logf("the table survived twelve minutes of streaming")
+	// Once the conversation is quiet, the lifetime runs out.
+	c.advance(11 * time.Minute)
+	st.Sweep()
+	if _, err := st.Get("req-1"); !errors.Is(err, mapping.ErrTableNotFound) {
+		t.Fatalf("a quiet conversation kept its table past the lifetime: %v", err)
+	}
 }
 
-// Does a table that is being used stay alive, or does the clock run from the
-// moment it was stored?
+// The lifetime runs from the last use, not from the moment the table was
+// stored.
 func TestStore_UseRefreshesTheDeadline(t *testing.T) {
 	gen := pseudo.NewGenerator([]byte("test-secret-not-a-real-one"), []byte("test-salt"), pseudo.DefaultRenderers())
 	c := &clock{now: time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)}
@@ -133,16 +134,13 @@ func TestStore_UseRefreshesTheDeadline(t *testing.T) {
 	}
 	c.advance(2 * time.Minute) // eleven minutes since Put, two since the last use
 	st.Sweep()
-	_, err := st.Get("req-1")
-	if err == nil {
-		t.Logf("use refreshes the deadline")
-	} else {
-		t.Logf("the deadline runs from Put, regardless of use: %v", err)
+	if _, err := st.Get("req-1"); err != nil {
+		t.Fatalf("the deadline runs from Put, regardless of use: %v", err)
 	}
 }
 
-// When the store is full, which table is evicted: the one stored longest ago,
-// or the one unused longest? A busy conversation is old but alive.
+// When the store is full, the table unused longest is evicted, not the one
+// stored longest ago: a busy conversation is old but alive.
 func TestStore_EvictionPicksTheRightVictim(t *testing.T) {
 	gen := pseudo.NewGenerator([]byte("test-secret-not-a-real-one"), []byte("test-salt"), pseudo.DefaultRenderers())
 	c := &clock{now: time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)}
@@ -159,12 +157,11 @@ func TestStore_EvictionPicksTheRightVictim(t *testing.T) {
 		}
 	}
 	st.Put("d", mapping.NewTable(gen))
-	_, err := st.Get("old-but-busy")
-	if err != nil {
-		t.Logf("the busy conversation was evicted: %v", err)
-		t.Logf("   -> a long session with many parallel requests can lose its table while it is streaming")
-	} else {
-		t.Logf("the busy conversation survived, %d tables left", st.Len())
+	if _, err := st.Get("old-but-busy"); err != nil {
+		t.Fatalf("the busy conversation was evicted: %v", err)
+	}
+	if _, err := st.Get("b"); err == nil {
+		t.Fatalf("the table unused longest survived the eviction")
 	}
 }
 

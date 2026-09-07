@@ -111,7 +111,7 @@ func (s *streams) prune(store *mapping.Store) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for id := range s.states {
-		if _, err := store.Get(id); err != nil {
+		if !store.Has(id) {
 			delete(s.states, id)
 		}
 	}

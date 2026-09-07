@@ -273,8 +273,7 @@ func TestRestorer_UnknownShapePassesThrough(t *testing.T) {
 }
 
 // TestStore_SetTTL: the new lifetime applies to a table that is already
-// held, measured from the moment it was stored; a non-positive value is
-// ignored.
+// held, measured from its last use; a non-positive value is ignored.
 func TestStore_SetTTL(t *testing.T) {
 	now := time.Unix(1_000_000, 0)
 	clock := func() time.Time { return now }
@@ -292,9 +291,10 @@ func TestStore_SetTTL(t *testing.T) {
 	if _, err := s.Get("b"); err != nil {
 		t.Fatalf("table must survive under the longer TTL: %v", err)
 	}
+	now = now.Add(2 * time.Minute)
 	s.SetTTL(time.Minute)
 	if _, err := s.Get("b"); err != mapping.ErrTableNotFound {
-		t.Fatal("a shorter TTL must apply to the held table from its own stored time")
+		t.Fatal("a shorter TTL must apply to the held table from its last use")
 	}
 }
 
@@ -414,15 +414,24 @@ func TestStore_TTL(t *testing.T) {
 	s := mapping.NewStore(mapping.StoreConfig{TTL: time.Minute, Now: func() time.Time { return now }})
 	s.Put("a", mapping.NewTable(fakeGen{}))
 	now = now.Add(59 * time.Second)
-	if _, err := s.Get("a"); err != nil {
-		t.Fatalf("Get before TTL = %v", err)
+	if n := s.Sweep(); n != 0 || s.Len() != 1 {
+		t.Fatalf("Sweep before TTL removed %d, Len = %d", n, s.Len())
 	}
 	now = now.Add(2 * time.Second)
 	if _, err := s.Get("a"); err != mapping.ErrTableNotFound {
 		t.Fatalf("Get after TTL = %v, want ErrTableNotFound", err)
 	}
+
+	// The lifetime runs from the last use, not from Put: a conversation
+	// that keeps reading its table keeps it.
 	s.Put("b", mapping.NewTable(fakeGen{}))
-	now = now.Add(2 * time.Minute)
+	for i := 0; i < 3; i++ {
+		now = now.Add(59 * time.Second)
+		if _, err := s.Get("b"); err != nil {
+			t.Fatalf("Get %d after a use inside the TTL = %v", i, err)
+		}
+	}
+	now = now.Add(61 * time.Second)
 	if n := s.Sweep(); n != 1 {
 		t.Fatalf("Sweep = %d, want 1", n)
 	}

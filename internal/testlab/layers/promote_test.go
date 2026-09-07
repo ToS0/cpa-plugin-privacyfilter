@@ -34,11 +34,11 @@ func TestLayers_MailAddressIsPromotedOverAnInnerTerm(t *testing.T) {
 	}
 }
 
-// The promotion is written for KindEmail alone. The same shape in the other
-// kinds keeps the old precedence, and the part of the later match outside
-// the term stays in the clear. The two red tests in leak_test.go show what
-// that costs; here the boundary itself is pinned down.
-func TestLayers_PromotionIsLimitedToMailAddresses(t *testing.T) {
+// The promotion holds for every kind: a later match that contains an
+// earlier one whole wins as a whole. The same domain inside a URL is
+// promoted like the mail address around it, and the kind of the containing
+// match decides the shape.
+func TestLayers_PromotionHoldsForEveryKind(t *testing.T) {
 	person, domain := local(8), zone(9)
 	mail := person + "@" + domain
 	terms := lab.Terms(t, detect.Term{Value: domain, Kind: detect.KindDomain})
@@ -48,22 +48,19 @@ func TestLayers_PromotionIsLimitedToMailAddresses(t *testing.T) {
 		t.Fatalf("mail address = %s, want one promoted mail match", where(got))
 	}
 
-	// The same domain inside a URL: the URL contains the term hit just as
-	// the mail address did, and is not promoted.
 	url := "https:" + sep + sep + domain + sep + "a"
 	got := detect.NewComposite(nil, terms, patterns).Scan(" " + url + " ")
-	if len(got) != 1 {
-		t.Fatalf("url = %s, want one match", where(got))
+	if len(got) != 1 || got[0].Kind != detect.KindURL || got[0].Value != url {
+		t.Fatalf("url = %s, want the whole URL promoted", where(got))
 	}
-	t.Logf("inside a URL the inner term still wins: kind %q over the %d bytes of the URL",
-		got[0].Kind, len(url))
 }
 
-// Promotion beats the term list on its own span: a term that covers exactly
-// the address it stands in loses its declared kind to the structural mail
-// match. The value is still replaced, only under a kind the user did not
-// choose.
-func TestLayers_PromotionOverridesTheKindOfATerm(t *testing.T) {
+// Promotion applies to a match that contains the earlier one strictly. A
+// later match over exactly the same span is not promoted, so the earlier
+// layer keeps the say over the kind of a value both report: a term the
+// user declared as a person stays a person even where the structural layer
+// sees an address.
+func TestLayers_SameSpanKeepsTheKindOfTheTerm(t *testing.T) {
 	mail := local(11) + "@" + zone(12)
 	text := "write to " + mail + " please"
 	terms := lab.Terms(t, detect.Term{Value: mail, Kind: detect.KindPerson})
@@ -73,10 +70,9 @@ func TestLayers_PromotionOverridesTheKindOfATerm(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("composite = %s, want one match", where(got))
 	}
-	if got[0].Kind != detect.KindEmail {
-		t.Fatalf("composite = %s, want the promoted mail match", where(got))
+	if got[0].Kind != detect.KindPerson || got[0].Source != "terms" {
+		t.Fatalf("composite = %s, want the term hit with its declared kind", where(got))
 	}
-	t.Logf("a term declared as %q over the same span is rendered as %q", detect.KindPerson, got[0].Kind)
 	roundTrip(t, text, detect.NewComposite(nil, terms, patterns))
 }
 
@@ -125,10 +121,10 @@ func TestLayers_PromotionSkipsAnExcludedInnerMatch(t *testing.T) {
 	t.Logf("a local part of %d bytes beside a pseudonym domain leaves unchanged", len(person))
 }
 
-// containsEarlier walks every earlier layer for every mail match, and it
-// walks all of it when nothing is contained. A mail log whose lines carry
-// the host name from the term list and an address that has nothing to do
-// with it is that case, and it is the ordinary one.
+// containsEarlier looks at the earlier matches that begin inside a later
+// one, so a mail log whose lines carry the host name from the term list and
+// an address that has nothing to do with it costs a pass over the matches,
+// not a product of the two lists.
 func TestLayers_PromotionCostGrowsWithTheNumberOfAddresses(t *testing.T) {
 	host := node(20)
 	unit := host + " " + local(21) + "@" + zone(22) + "\n"
