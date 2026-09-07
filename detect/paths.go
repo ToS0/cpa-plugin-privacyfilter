@@ -1,6 +1,7 @@
 package detect
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"unicode"
@@ -110,9 +111,18 @@ func NewPaths(cfg PathsConfig) (Detector, error) {
 		d.preserve[s] = true
 	}
 	for _, s := range cfg.Preserve {
-		if s = strings.TrimSpace(s); s != "" {
-			d.preserve[s] = true
+		if strings.TrimSpace(s) == "" {
+			continue
 		}
+		// A preserve entry names one path segment. An entry that carries a
+		// slash or a glob character can never equal a single segment, so it
+		// would be accepted and silently do nothing while the segment it was
+		// meant to keep goes on being replaced. Name it in the error rather
+		// than swallow it.
+		if strings.ContainsAny(s, `/\*?[]`) {
+			return nil, fmt.Errorf("detect: path.preserve entry %q is not a single segment; list the directory name alone, without a slash or a wildcard", s)
+		}
+		d.preserve[strings.TrimSpace(s)] = true
 	}
 	return d, nil
 }

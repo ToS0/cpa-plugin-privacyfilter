@@ -41,7 +41,6 @@ func TestConfig_PathsPreserveEmptyEntries(t *testing.T) {
 // an entry is accepted and does nothing, and the user reads his own
 // configuration and believes the directory is preserved.
 func TestConfig_PathsPreserveEntriesThatCannotMatch(t *testing.T) {
-	skipOpenFinding(t)
 	customer := dirName(4711)
 	path := configPath("mnt", customer, "notes.txt")
 	entries := []string{
