@@ -44,6 +44,30 @@ func TestWalk_ReserializationIsDeterministic(t *testing.T) {
 	}
 }
 
+// Bytes after the closing brace: the walk accepts them when nothing changes.
+// The question is what happens to them once something does change.
+func TestWalk_TrailingBytesAfterObject(t *testing.T) {
+	skipOpenFinding(t)
+	cases := []string{
+		`{"a":"zeus.lan"}trailing`,
+		`{"a":"zeus.lan"} `,
+		`{"a":"zeus.lan"}` + "\n",
+		`{"a":"zeus.lan"}{"b":"second"}`,
+	}
+	for _, body := range cases {
+		out, changed, err := payload.Walk([]byte(body), payload.WalkOptions{}, replaceHost)
+		if err != nil {
+			t.Logf("%-32q -> err=%v", body, err)
+			continue
+		}
+		lost := !strings.HasSuffix(string(out), strings.TrimPrefix(body, `{"a":"zeus.lan"}`))
+		t.Logf("%-32q -> changed=%v out=%q trailing lost=%v", body, changed, string(out), lost)
+		if changed && lost {
+			t.Errorf("replacement dropped the bytes after the object: %q became %q", body, out)
+		}
+	}
+}
+
 // The same question for ReplaceStrings, which is what the forward path calls.
 func TestReplaceStrings_TrailingBytes(t *testing.T) {
 	body := []byte(`{"a":"zeus.lan"}trailing`)

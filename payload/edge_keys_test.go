@@ -11,7 +11,87 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/rheodev/cpa-plugin-privacyfilter/payload"
 )
+
+// The same key twice in one object. JSON leaves the case to the
+// implementation, and the two directions of the plugin resolve it
+// differently: the forward path decodes into a map, where the last pair
+// wins and the first is gone before any visitor sees it; the return path
+// walks the bytes and finds both.
+func TestJSONEdge_DuplicateKeyInOneObject(t *testing.T) {
+	skipOpenFinding(t)
+	// The value to protect sits in the first of the two pairs.
+	first := fmt.Sprintf(`{"k":%q,"k":"harmless"}`, needle)
+	out, changed, err := outbound(first)
+	if err != nil {
+		t.Fatalf("forward: %v", err)
+	}
+	t.Logf("first pair carries the value:  changed=%v out=%s", changed, out)
+	if leaked(out) {
+		t.Errorf("the forward path never saw the first of two pairs and sent it on unchanged: %s", out)
+	}
+
+	// The value sits in the second pair, so the walk does replace it - and
+	// drops the first pair while writing the body back.
+	second := fmt.Sprintf(`{"k":"harmless","k":%q}`, needle)
+	out, changed, err = outbound(second)
+	if err != nil {
+		t.Fatalf("forward: %v", err)
+	}
+	t.Logf("second pair carries the value: changed=%v out=%s", changed, out)
+	if n := bytes.Count(out, []byte(`"k":`)); n != 2 {
+		t.Errorf("the forward path wrote back %d of the two pairs: %s", n, out)
+	}
+
+	// The return path sees both and rewrites both.
+	ret, n, err := inbound(fmt.Sprintf(`{"k":%q,"k":%q}`, needle, needle))
+	if err != nil {
+		t.Fatalf("return: %v", err)
+	}
+	t.Logf("return path over two pairs: replaced=%d out=%s", n, ret)
+	if n != 2 {
+		t.Errorf("the return path rewrote %d of the two pairs: %s", n, ret)
+	}
+}
+
+// The deny list decides by the "type" of the enclosing object. When "type"
+// appears twice, the forward path reads the last one and the return path the
+// first, so the same body is filtered differently in the two directions.
+func TestJSONEdge_DuplicateTypeKeyDecidesTheDenyList(t *testing.T) {
+	skipOpenFinding(t)
+	// A block that opens as text and closes as thinking. The forward walk
+	// sees "thinking", denies the whole object and lets the text out.
+	body := fmt.Sprintf(`{"type":"text","text":%q,"type":"thinking"}`, needle)
+	out, changed, err := outbound(body)
+	if err != nil {
+		t.Fatalf("forward: %v", err)
+	}
+	t.Logf("text then thinking: changed=%v out=%s", changed, out)
+	if leaked(out) {
+		t.Errorf("a second type key turned the block into a thinking block and the text left in clear: %s", out)
+	}
+
+	// The other way round, and now the two directions disagree: the forward
+	// walk replaces, the return path denies.
+	body = fmt.Sprintf(`{"type":"thinking","text":%q,"type":"text"}`, needle)
+	fwd, _, err := outbound(body)
+	if err != nil {
+		t.Fatalf("forward: %v", err)
+	}
+	ret, n, err := inbound(body)
+	if err != nil {
+		t.Fatalf("return: %v", err)
+	}
+	t.Logf("thinking then text: forward=%s", fwd)
+	t.Logf("thinking then text: return=%s replaced=%d", ret, n)
+	if leaked(fwd) == leaked(ret) {
+		t.Logf("both directions agree on this body")
+	} else {
+		t.Logf("the two directions disagree: the forward walk reads the last type, the byte scanner the first")
+	}
+}
 
 // A key without a name is legal JSON. It must not confuse the path, and the
 // value behind it must be filtered like any other.
@@ -86,6 +166,44 @@ func TestJSONEdge_WideObject(t *testing.T) {
 		t.Errorf("the return path replaced %d of %d values in the wide object", n, hits)
 	}
 	t.Logf("width=%d hits=%d body=%d bytes forward=%d bytes", width, hits, len(body), len(fwd))
+}
+
+// The place a key holds text is a place the filter never looks: neither
+// direction offers an object key to the visitor. On the way out the name of
+// a key leaves in clear, on the way back a pseudonym the model wrote as a
+// key is never resolved.
+func TestJSONEdge_ObjectKeysAreNeverVisited(t *testing.T) {
+	skipOpenFinding(t)
+	// A map keyed by host or address is an everyday shape: a rendered
+	// inventory, the networks of a container, a table of hosts.
+	body := fmt.Sprintf(`{"messages":[{"role":"user","content":[{"type":"tool_use",`+
+		`"id":"toolu_01","name":"inspect","input":{"hosts":{%q:{"state":"up"}},"note":%q}}]}]}`,
+		needle, needle)
+
+	fwd, _, err := outbound(body)
+	if err != nil {
+		t.Fatalf("forward: %v", err)
+	}
+	if bytes.Contains(fwd, []byte(`"note"`)) && bytes.Contains(fwd, []byte(mask)) {
+		t.Logf("the value behind the key was replaced, as expected")
+	}
+	if leaked(fwd) {
+		t.Errorf("the key itself left in clear text: %s", fwd)
+	}
+
+	// The same in the other direction: the model answers with the pseudonym
+	// as a key, and the return path leaves it standing, so the tool is
+	// called with a name that does not exist on this machine.
+	answer := fmt.Sprintf(`{"content":[{"type":"tool_use","id":"toolu_02","name":"read",`+
+		`"input":{"files":{%q:"content"},"path":%q}}]}`, mask, mask)
+	back, n, err := payload.ReplaceStrings([]byte(answer), payload.DefaultDeny(), show)
+	if err != nil {
+		t.Fatalf("return: %v", err)
+	}
+	t.Logf("restored=%d out=%s", n, back)
+	if bytes.Contains(back, []byte(`"`+mask+`":`)) {
+		t.Errorf("a pseudonym the model wrote as a key was not restored: %s", back)
+	}
 }
 
 // Both directions must see the same set of fields; where they do not, a body

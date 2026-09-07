@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -142,6 +143,63 @@ func keysOf(m map[string]any) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// An object made of nothing but denied keys is invisible to the filter. That
+// is right where the keys mean what the schema says; it is a hole where the
+// same names appear as the arguments of a tool, which is arbitrary JSON that
+// the model fills in.
+func TestJSONEdge_ObjectOfOnlyDeniedKeys(t *testing.T) {
+	skipOpenFinding(t)
+	denied := []string{"model", "role", "type", "id", "tool_use_id", "signature",
+		"stop_reason", "stop_sequence", "media_type", "cache_control"}
+
+	var b strings.Builder
+	b.WriteByte('{')
+	for i, k := range denied {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, `%q:%q`, k, needle)
+	}
+	b.WriteByte('}')
+
+	out, changed, err := outbound(b.String())
+	if err != nil {
+		t.Fatalf("forward: %v", err)
+	}
+	t.Logf("a body of only denied keys: changed=%v", changed)
+	if changed {
+		t.Errorf("a denied key was rewritten after all: %s", out)
+	}
+
+	// The same names one level down, where they are the arguments of a tool
+	// and mean nothing to the schema.
+	var args strings.Builder
+	args.WriteByte('{')
+	for i, k := range denied {
+		if i > 0 {
+			args.WriteByte(',')
+		}
+		fmt.Fprintf(&args, `%q:%q`, k, needle)
+	}
+	fmt.Fprintf(&args, `,"query":%q}`, needle)
+
+	body := fmt.Sprintf(`{"messages":[{"role":"user","content":[`+
+		`{"type":"tool_use","id":"toolu_01","name":"crm_lookup","input":%s}]}]}`, args.String())
+
+	fwd, _, err := outbound(body)
+	if err != nil {
+		t.Fatalf("forward: %v", err)
+	}
+	paths, err := visitedOut(body)
+	if err != nil {
+		t.Fatalf("visitedOut: %v", err)
+	}
+	t.Logf("of %d tool arguments the walk offered %d: %q", len(denied)+1, len(paths), paths)
+	if n := bytes.Count(fwd, []byte(needle)); n > 0 {
+		t.Errorf("%d tool arguments kept their clear text because their key is denied: %s", n, fwd)
+	}
 }
 
 // A denied key whose value is an array is not protected: the leaf of the

@@ -33,6 +33,27 @@ func TestReplaceStrings_TrailingWhitespace(t *testing.T) {
 	}
 }
 
+// A lone surrogate survives in JSON but has no UTF-8 encoding. Go's encoder
+// turns it into the replacement character, which silently rewrites the text.
+func TestWalk_LoneSurrogate(t *testing.T) {
+	skipOpenFinding(t)
+	body := `{"keep":"\ud800","hit":"zeus.lan"}`
+	out, changed, err := payload.Walk([]byte(body), payload.WalkOptions{}, replaceHost)
+	if err != nil {
+		t.Logf("rejected: %v", err)
+		return
+	}
+	t.Logf("changed=%v out=%s", changed, out)
+	switch {
+	case strings.Contains(string(out), `\ud800`):
+		t.Logf("lone surrogate preserved")
+	case strings.Contains(string(out), "�"), strings.Contains(string(out), `�`):
+		t.Errorf("the lone surrogate was rewritten to the replacement character: %s", out)
+	default:
+		t.Errorf("unexpected handling of the lone surrogate: %s", out)
+	}
+}
+
 // Control characters must stay escaped, or the body becomes invalid JSON.
 func TestWalk_ControlCharacters(t *testing.T) {
 	body := `{"ctl":"a\u0001b\u001fc","hit":"zeus.lan"}`
