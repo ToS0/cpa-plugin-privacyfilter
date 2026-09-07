@@ -380,16 +380,18 @@ type Restorer interface {
 	// wrote there itself only shows the user a value that is their own.
 	Restore(text string, escaped bool) (out string, changed bool)
 	// Holdback returns the length in bytes of the tail of text that has to
-	// wait for the next fragment because it may still grow into a pseudonym:
+	// wait for the next fragment because the next byte still decides it:
 	// everything from the first position where the walk over the table's
-	// pseudonyms reaches the end of text undecided. A pseudonym that is
-	// complete before that position is never part of the tail, so the tail
-	// never cuts into one; the case the rule exists for is a complete
-	// pseudonym whose last byte happens to begin another pseudonym. The
-	// stream restores what lies in front of the tail with Restore and gets
-	// the same matches, because both walk the text the same way. The result
-	// is 0 when nothing is pending, never splits a UTF-8 sequence and is at
-	// most MaxPseudonymLen()-1.
+	// pseudonyms reaches the end of text undecided, or where a complete
+	// pseudonym ends with the text and a letter or digit behind it would
+	// glue it to a word. A pseudonym that is complete before that position
+	// is never part of the tail, so the tail never cuts into one; the case
+	// the first rule exists for is a complete pseudonym whose last byte
+	// happens to begin another pseudonym. The result is 0 when nothing is
+	// pending, never splits a UTF-8 sequence and is at most
+	// MaxPseudonymLen(). The stream does not call Holdback and Restore by
+	// hand; it keeps a Tail, which also carries the one bit the two calls
+	// cannot: whether the byte in front of the text continued a word.
 	Holdback(text string) int
 	// Hits returns how often Restore swapped each pseudonym back so far,
 	// keyed by pseudonym. The map is a copy; the counting is safe for the
@@ -557,6 +559,14 @@ func (tr *trie) insertSpelling(e Entry, spelling string, alias bool) {
 // original is never rescanned. A hit that is not delimited on both sides is
 // skipped; see the Restorer interface for why.
 func (r *restorer) Restore(text string, escaped bool) (string, bool) {
+	return r.restore(text, escaped, false, false)
+}
+
+// restore is Restore over a text whose edges are known: glued says the rune
+// in front of text continued a word, next says the rune behind it does. The
+// stream knows both from the text it has already delivered and the text it
+// still holds; a whole body has neither.
+func (r *restorer) restore(text string, escaped, glued, next bool) (string, bool) {
 	tr := r.current()
 	if tr == nil || text == "" {
 		return text, false
@@ -572,7 +582,7 @@ func (r *restorer) Restore(text string, escaped bool) (string, bool) {
 			continue
 		}
 		hit, end := tr.longestAt(text, i)
-		if hit == nil || !delimited(text, i, end) {
+		if hit == nil || !delimitedAt(text, i, end, glued, next) {
 			i++
 			continue
 		}
@@ -626,31 +636,35 @@ func isTokenRune(r rune) bool {
 	return unicode.IsLetter(r) || unicode.IsDigit(r)
 }
 
-// delimited reports whether the match text[start:end] stands on its own. Only
-// the sides that actually carry a token rune are checked: a pseudonym that
-// begins or ends with punctuation may sit directly against a letter without
-// growing a word, which keeps matches inside JSON and inside paths working.
+// delimitedAt reports whether the match text[start:end] stands on its own.
+// Only the sides that actually carry a token rune are checked: a pseudonym
+// that begins or ends with punctuation may sit directly against a letter
+// without growing a word, which keeps matches inside JSON and inside paths
+// working.
 //
-// The edges of text count as delimiters. On the stream that is not the whole
-// truth — the neighbouring rune may live in the previous or the next chunk —
-// but Holdback keeps a pseudonym that could still grow whole until the next
-// fragment, and one that is complete and cannot grow is restored at the edge.
-// The residual case is a pseudonym split from its neighbouring word by
-// exactly the chunk boundary; it is accepted, and it is the behaviour that was
-// in place before the boundary rule anyway.
-func delimited(text string, start, end int) bool {
-	if start > 0 {
-		if first, _ := utf8.DecodeRuneInString(text[start:end]); isTokenRune(first) {
+// The edges of text count as delimiters unless the caller says otherwise:
+// glued means the rune in front of text continued a word, next means the
+// rune behind it does. A whole body has neither. The stream knows both,
+// because it has delivered the text in front and holds the text behind, so
+// a pseudonym split from its neighbouring word by exactly the chunk boundary
+// is judged as it would be in one piece.
+func delimitedAt(text string, start, end int, glued, next bool) bool {
+	if first, _ := utf8.DecodeRuneInString(text[start:end]); isTokenRune(first) {
+		if start > 0 {
 			if prev, _ := utf8.DecodeLastRuneInString(text[:start]); isTokenRune(prev) {
 				return false
 			}
+		} else if glued {
+			return false
 		}
 	}
-	if end < len(text) {
-		if last, _ := utf8.DecodeLastRuneInString(text[start:end]); isTokenRune(last) {
-			if next, _ := utf8.DecodeRuneInString(text[end:]); isTokenRune(next) {
+	if last, _ := utf8.DecodeLastRuneInString(text[start:end]); isTokenRune(last) {
+		if end < len(text) {
+			if after, _ := utf8.DecodeRuneInString(text[end:]); isTokenRune(after) {
 				return false
 			}
+		} else if next {
+			return false
 		}
 	}
 	return true
@@ -664,17 +678,27 @@ func delimited(text string, start, end int) bool {
 // while the trie could go on is undecided, and everything from its start
 // is held back, a complete shorter match inside it included: the next
 // fragment may turn it into a longer pseudonym, and the scan of the joined
-// text decides. A held tail is shorter than the pseudonym it could become,
-// and it begins at a pseudonym's first byte, which is ASCII, so it never
-// splits a rune.
+// text decides. A complete pseudonym that ends with the text and ends in a
+// letter or digit is undecided as well, because the next byte may glue it
+// to a word, in which case it is no pseudonym; it is held whole. A held
+// tail is at most as long as the longest pseudonym, and it begins at a
+// pseudonym's first byte, which is ASCII, so it never splits a rune.
 //
 // Before this scan the holdback was the longest suffix that is a proper
 // prefix of some pseudonym, which cut a complete pseudonym in two whenever
 // its last byte could begin another one: "d-…d" followed by a fragment
 // boundary lost its last byte to the holdback, and neither piece was ever
 // restored. Path segment pseudonyms end in a hex digit and begin with "d",
-// so one in sixteen of them was at risk at every fragment boundary.
+// so one in sixteen of them was at risk at every fragment boundary. And
+// before the second rule a complete pseudonym at a fragment boundary was
+// restored although the next fragment began with a letter, so the stream
+// restored where the same text in one piece did not.
 func (r *restorer) Holdback(text string) int {
+	return r.holdback(text, false)
+}
+
+// holdback is Holdback over a text whose front edge is known; see restore.
+func (r *restorer) holdback(text string, glued bool) int {
 	tr := r.current()
 	if tr == nil {
 		return 0
@@ -684,12 +708,16 @@ func (r *restorer) Holdback(text string) int {
 			i++
 			continue
 		}
-		if i > 0 {
-			// A pseudonym that would continue the word in front of it is
-			// never restored, so it is not worth waiting for either.
-			prev, _ := utf8.DecodeLastRuneInString(text[:i])
-			first, _ := utf8.DecodeRuneInString(text[i:])
-			if isTokenRune(prev) && isTokenRune(first) {
+		// A pseudonym that would continue the word in front of it is never
+		// restored, so it is not worth waiting for either.
+		first, _ := utf8.DecodeRuneInString(text[i:])
+		if isTokenRune(first) {
+			if i > 0 {
+				if prev, _ := utf8.DecodeLastRuneInString(text[:i]); isTokenRune(prev) {
+					i++
+					continue
+				}
+			} else if glued {
 				i++
 				continue
 			}
@@ -711,7 +739,12 @@ func (r *restorer) Holdback(text string) int {
 		if j == len(text) && len(node.children) > 0 {
 			return len(text) - i
 		}
-		if hit != nil && delimited(text, i, end) {
+		if hit != nil && end == len(text) {
+			if last, _ := utf8.DecodeLastRuneInString(text[i:end]); isTokenRune(last) {
+				return len(text) - i
+			}
+		}
+		if hit != nil && delimitedAt(text, i, end, false, false) {
 			i = end
 			continue
 		}
@@ -735,4 +768,69 @@ func jsonEscape(s string) string {
 		return out[1 : len(out)-1]
 	}
 	return out
+}
+
+// Tail is the text of one streamed block that has not been delivered yet,
+// with the one thing the held bytes alone cannot tell: whether the rune in
+// front of them continued a word. Every fragment of the block goes through
+// Push, which returns what can be delivered now, restored, and keeps the
+// rest; Flush hands out the rest when the block ends. A Tail is a value and
+// may be copied to be put back.
+type Tail struct {
+	r     *restorer
+	held  string
+	glued bool
+}
+
+// NewTail returns an empty tail over r. A restorer that is not one of this
+// package's, or nil, gives a tail that holds nothing and restores nothing.
+func NewTail(r Restorer) Tail {
+	rr, _ := r.(*restorer)
+	return Tail{r: rr}
+}
+
+// Held returns the text the tail is waiting to decide.
+func (t *Tail) Held() string { return t.held }
+
+// Push appends fragment to the held text, decides how much of the joined
+// text the next fragment can still change, keeps that much and returns the
+// rest restored. changed reports whether restoring changed the returned
+// text. out is "" when everything waits.
+func (t *Tail) Push(fragment string, escaped bool) (out string, changed bool) {
+	if t.r == nil {
+		return fragment, false
+	}
+	combined := t.held + fragment
+	n := t.r.holdback(combined, t.glued)
+	emit, held := combined[:len(combined)-n], combined[len(combined)-n:]
+	t.held = held
+	if emit == "" {
+		return "", false
+	}
+	next := false
+	if held != "" {
+		first, _ := utf8.DecodeRuneInString(held)
+		next = isTokenRune(first)
+	}
+	out, changed = t.r.restore(emit, escaped, t.glued, next)
+	last, _ := utf8.DecodeLastRuneInString(emit)
+	t.glued = isTokenRune(last)
+	return out, changed
+}
+
+// Flush returns the held text restored and leaves the tail empty. The block
+// has ended, so nothing follows the held text.
+func (t *Tail) Flush(escaped bool) (out string, changed bool) {
+	held := t.held
+	t.held = ""
+	if held == "" {
+		return "", false
+	}
+	if t.r == nil {
+		return held, false
+	}
+	out, changed = t.r.restore(held, escaped, t.glued, false)
+	last, _ := utf8.DecodeLastRuneInString(held)
+	t.glued = isTokenRune(last)
+	return out, changed
 }

@@ -231,15 +231,20 @@ func TestRestorer_DomainWithoutReservedSuffix(t *testing.T) {
 		}
 	}
 	// On the stream the bare token may still grow into the full one, so it
-	// is held back at the edge of a chunk until the next byte decides.
+	// is held back at the edge of a chunk until the next byte decides; the
+	// full spelling is complete, but a letter behind it would glue it to a
+	// word, so it waits for that byte as well.
 	if n := r.Holdback("zone " + bare); n != len(bare) {
 		t.Errorf("Holdback of a bare domain at the chunk edge = %d, want %d", n, len(bare))
 	}
 	if n := r.Holdback("zone " + bare + " "); n != 0 {
 		t.Errorf("Holdback after a delimiter = %d, want 0", n)
 	}
-	if n := r.Holdback("zone " + dom); n != 0 {
-		t.Errorf("Holdback of the full spelling = %d, want 0", n)
+	if n := r.Holdback("zone " + dom); n != len(dom) {
+		t.Errorf("Holdback of the full spelling = %d, want %d", n, len(dom))
+	}
+	if n := r.Holdback("zone " + dom + "."); n != 0 {
+		t.Errorf("Holdback of the full spelling before a delimiter = %d, want 0", n)
 	}
 	if hits := tb.RestoredHits(); hits[dom] != 4 || hits[mail] != 2 {
 		t.Fatalf("hits = %v, want domain 4, email 2", hits)
@@ -314,7 +319,8 @@ func TestRestorer_Holdback(t *testing.T) {
 		"foo " + p[:1]:           1,
 		"foo " + p[:5]:           5,
 		"foo " + p[:len(p)-1]:    len(p) - 1,
-		"foo " + p:               0, // complete and unable to grow: restored, not held
+		"foo " + p:               len(p), // complete, but the next byte may glue it to a word
+		"foo " + p + " ":         0,      // the space decided it
 		"foo " + p + " " + p[:3]: 3,
 		"foo " + p + p[:3]:       0, // continues the word in front: never restored, so not held
 		"Müller " + p[:2]:        2,
@@ -326,8 +332,8 @@ func TestRestorer_Holdback(t *testing.T) {
 		if got := r.Holdback(text); got != want {
 			t.Errorf("Holdback(%q) = %d, want %d", text, got, want)
 		}
-		if got := r.Holdback(text); got > tb.MaxPseudonymLen()-1 {
-			t.Errorf("Holdback(%q) = %d exceeds MaxPseudonymLen-1", text, got)
+		if got := r.Holdback(text); got > tb.MaxPseudonymLen() {
+			t.Errorf("Holdback(%q) = %d exceeds MaxPseudonymLen", text, got)
 		}
 	}
 	if mapping.NewRestorer(mapping.NewTable(fakeGen{})).Holdback("anything") != 0 {
@@ -363,12 +369,12 @@ func TestRestorer_HoldbackKeepsCompletePseudonym(t *testing.T) {
 	r := tb.Restorer()
 
 	cases := map[string]int{
-		"/home/" + a:          0, // complete, and "d-a…" cannot grow into "d-b…"
+		"/home/" + a:          14, // complete, and "d-a…" cannot grow into "d-b…", but a letter may follow
 		"/home/" + a + "/src": 0,
 		"/home/" + a[:13]:     13, // one byte short: still growing
 		"/home/d":             1,
 		"say P":               1, // "P" is complete but may become "PQ"
-		"say PQ":              0,
+		"say PQ":              2, // complete, and the next byte decides whether it stands alone
 		"say P ":              0, // the space decided it
 		"say PX":              0, // never a pseudonym
 	}
@@ -377,13 +383,18 @@ func TestRestorer_HoldbackKeepsCompletePseudonym(t *testing.T) {
 			t.Errorf("Holdback(%q) = %d, want %d", text, got, want)
 		}
 	}
-	// What is not held back restores exactly as the whole text would.
-	for _, text := range []string{"/home/" + a + "/src", "say P ", "say PQ"} {
+	// Delivered through a Tail, fragment by fragment, the text restores
+	// exactly as the whole text would, wherever it is cut.
+	for _, text := range []string{"/home/" + a + "/src", "say P ", "say PQ", "/home/" + a + "x", "say PQx"} {
 		whole, _ := r.Restore(text, false)
-		n := r.Holdback(text)
-		head, _ := r.Restore(text[:len(text)-n], false)
-		if head+text[len(text)-n:] != whole {
-			t.Errorf("Restore of the unheld part of %q = %q, whole text restores to %q", text, head, whole)
+		for cut := 1; cut < len(text); cut++ {
+			tail := mapping.NewTail(r)
+			head, _ := tail.Push(text[:cut], false)
+			mid, _ := tail.Push(text[cut:], false)
+			rest, _ := tail.Flush(false)
+			if got := head + mid + rest; got != whole {
+				t.Errorf("Tail over %q cut at %d = %q, whole text restores to %q", text, cut, got, whole)
+			}
 		}
 	}
 }

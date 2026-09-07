@@ -1,9 +1,9 @@
 package basics
 
 // Probes for the streaming hold-back. stream.go itself is package main and
-// cannot be imported, but the mechanism lives in mapping.Restorer and is
-// reachable from outside: append to what is pending, ask how much of the
-// tail must wait, emit and restore the rest.
+// cannot be imported, but the mechanism lives in mapping.Tail and is
+// reachable from outside: push every fragment, deliver what comes back,
+// flush when the block ends.
 
 import (
 	"strings"
@@ -17,23 +17,16 @@ import (
 func streamRestore(t *testing.T, chunks []string, r mapping.Restorer) string {
 	t.Helper()
 	var out strings.Builder
-	pending := ""
+	tail := mapping.NewTail(r)
 	for _, c := range chunks {
-		pending += c
-		h := r.Holdback(pending)
-		if h < 0 || h > len(pending) {
-			t.Fatalf("Holdback(%q) = %d, out of range", pending, h)
-		}
-		emit := pending[:len(pending)-h]
-		pending = pending[len(pending)-h:]
+		emit, _ := tail.Push(c, false)
 		if !utf8.ValidString(emit) {
 			t.Errorf("hold-back split a UTF-8 sequence: emitted %q", emit)
 		}
-		restored, _ := r.Restore(emit, false)
-		out.WriteString(restored)
+		out.WriteString(emit)
 	}
-	restored, _ := r.Restore(pending, false)
-	out.WriteString(restored)
+	rest, _ := tail.Flush(false)
+	out.WriteString(rest)
 	return out.String()
 }
 
@@ -67,9 +60,10 @@ func tableWithValues(t *testing.T) (*mapping.Table, []string) {
 }
 
 // Splitting anywhere must not change the result. This is the property the
-// hold-back exists for.
+// hold-back exists for. The cuts fall on rune boundaries, because every
+// delta of an upstream is a JSON string of its own and never carries half a
+// character; a cut inside a rune would measure the probe, not the plugin.
 func TestHoldback_SplitAtEveryPosition(t *testing.T) {
-	skipOpenFinding(t)
 	tab, ps := tableWithValues(t)
 	r := tab.Restorer()
 
@@ -86,6 +80,9 @@ func TestHoldback_SplitAtEveryPosition(t *testing.T) {
 	for _, text := range texts {
 		want, _ := r.Restore(text, false)
 		for i := 1; i < len(text); i++ {
+			if !utf8.RuneStart(text[i]) {
+				continue
+			}
 			got := streamRestore(t, []string{text[:i], text[i:]}, r)
 			if got != want {
 				t.Fatalf("split at %d of %q:\n got %q\nwant %q", i, text, got, want)
@@ -97,7 +94,6 @@ func TestHoldback_SplitAtEveryPosition(t *testing.T) {
 // Three chunks, byte by byte, over a shorter text: the same property under
 // more fragmentation.
 func TestHoldback_ByteByByte(t *testing.T) {
-	skipOpenFinding(t)
 	tab, ps := tableWithValues(t)
 	r := tab.Restorer()
 	text := "a" + ps[0] + "b" + ps[1] + "c"
@@ -119,9 +115,12 @@ func TestHoldback_BoundedByLongestPseudonym(t *testing.T) {
 	r := tab.Restorer()
 	max := tab.MaxPseudonymLen()
 
-	long := strings.Repeat("x", 5000) + ps[0][:len(ps[0])-1]
+	long := strings.Repeat("x", 5000) + " " + ps[0][:len(ps[0])-1]
 	if h := r.Holdback(long); h >= max {
 		t.Errorf("Holdback on a 5000 byte text = %d, must be below MaxPseudonymLen %d", h, max)
+	}
+	if h := r.Holdback(strings.Repeat("x", 5000) + " " + ps[0]); h > max {
+		t.Errorf("Holdback behind a complete pseudonym = %d, must not exceed MaxPseudonymLen %d", h, max)
 	}
 	if h := r.Holdback(strings.Repeat("y", 5000)); h != 0 {
 		t.Errorf("Holdback on text without any prefix = %d, want 0", h)

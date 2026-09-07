@@ -40,11 +40,11 @@ func (st *state) pending() (blocks int, text string) {
 	sort.Ints(idx)
 	var b strings.Builder
 	for _, i := range idx {
-		if st.holds[i].text == "" {
+		if st.holds[i].text() == "" {
 			continue
 		}
 		blocks++
-		b.WriteString(st.holds[i].text)
+		b.WriteString(st.holds[i].text())
 	}
 	return blocks, b.String()
 }

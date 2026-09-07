@@ -68,8 +68,8 @@ func FuzzPropsHoldbackBounds(f *testing.F) {
 		if h < 0 || h > len(text) {
 			t.Fatalf("Holdback(%q) = %d, outside 0..%d", text, h, len(text))
 		}
-		if max := tab.MaxPseudonymLen(); max > 0 && h > max-1 {
-			t.Errorf("Holdback(%q) = %d, above MaxPseudonymLen-1 = %d", text, h, max-1)
+		if max := tab.MaxPseudonymLen(); max > 0 && h > max {
+			t.Errorf("Holdback(%q) = %d, above MaxPseudonymLen = %d", text, h, max)
 		}
 
 		head, tail := text[:len(text)-h], text[len(text)-h:]
@@ -100,8 +100,8 @@ func TestProps_HoldbackOverTableValues(t *testing.T) {
 			t.Errorf("Holdback(%q) = %d, outside 0..%d", text, h, len(text))
 			continue
 		}
-		if max := tab.MaxPseudonymLen(); h > max-1 {
-			t.Errorf("Holdback(%q) = %d, above MaxPseudonymLen-1 = %d", text, h, max-1)
+		if max := tab.MaxPseudonymLen(); h > max {
+			t.Errorf("Holdback(%q) = %d, above MaxPseudonymLen = %d", text, h, max)
 		}
 		if head := text[:len(text)-h]; !utf8.ValidString(head) {
 			t.Errorf("Holdback(%q) = %d cut through a rune, emitted %q", text, h, head)

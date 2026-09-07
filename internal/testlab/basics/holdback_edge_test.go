@@ -8,7 +8,6 @@ import (
 )
 
 func TestHoldback_CompletePseudonymAtChunkEnd(t *testing.T) {
-	skipOpenFinding(t)
 	tab, ps := tableWithValues(t)
 	r := tab.Restorer()
 	alias := ps[0]

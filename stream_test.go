@@ -329,10 +329,20 @@ func TestStream_UntouchedAndPassThrough(t *testing.T) {
 	if !sawThinking || !sawPing {
 		t.Fatal("thinking delta or ping missing from the output")
 	}
-	// The clean delta at the end of the block carried no possible prefix
-	// and no pseudonym, so the host received the chunk untouched.
-	if string(r.out[len(r.out)-3]) != string(clean) {
-		t.Fatalf("clean delta was rewritten: %s", r.out[len(r.out)-3])
+	// The delta in front ended right behind a pseudonym, so the pseudonym
+	// waited for the next byte and comes out, restored, in front of the
+	// clean delta's text; the clean delta is therefore rewritten. The one
+	// before it, "Hallo " with the pseudonym held, went out shortened.
+	last := r.out[len(r.out)-3]
+	if string(last) == string(clean) {
+		t.Fatalf("the clean delta went out untouched although the pseudonym in front of it was still held: %s", last)
+	}
+	evs, err := payload.ParseEvents(last)
+	if err != nil || len(evs) != 1 {
+		t.Fatalf("ParseEvents: %v (%d events)", err, len(evs))
+	}
+	if got, _ := payload.GetText(evs[0], payload.TextField{Path: payload.Path{"delta", "text"}}); got != "athene.lan nichts weiter" {
+		t.Fatalf("the clean delta carries %q, want the restored pseudonym in front of its own text", got)
 	}
 }
 
