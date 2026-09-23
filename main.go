@@ -227,8 +227,8 @@ func (p *privacyFilterPlugin) initPseudonymize() error {
 		if kind := detect.Kind(t.Kind); !kind.Valid() {
 			return fmt.Errorf("privacyfilter: terms[%d]: invalid kind %q, want one of %s", i, t.Kind, detect.KindNames())
 		}
-		if termUnsafe(t) {
-			return fmt.Errorf("privacyfilter: terms[%d]: %w", i, unsafeTermError())
+		if class := termUnsafe(t); class != "" {
+			return fmt.Errorf("privacyfilter: terms[%d]: %w", i, unsafeTermError(class))
 		}
 	}
 	if termsPath := resolveTermsFilePath(p.pluginDir, p.cfg.TermsFile); termsPath != "" {
@@ -251,8 +251,8 @@ func (p *privacyFilterPlugin) initPseudonymize() error {
 			// file or the patch that receives it; see the package harm under
 			// internal/testlab. Such a value is refused at start, with the
 			// line but without the value.
-			if termUnsafe(t) {
-				return fmt.Errorf("privacyfilter: terms_file %s line %d: %w", termsPath, lines[i], unsafeTermError())
+			if class := termUnsafe(t); class != "" {
+				return fmt.Errorf("privacyfilter: terms_file %s line %d: %w", termsPath, lines[i], unsafeTermError(class))
 			}
 		}
 		entries = mergeTerms(entries, fromFile)

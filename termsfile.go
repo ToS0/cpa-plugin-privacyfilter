@@ -81,39 +81,61 @@ func loadTermsFileLines(path string) ([]TermEntry, []int, error) {
 // control characters, above all the newline and the carriage return.
 const unsafeTermChars = "'\"`$;&|<>#%/\\\t\r\n"
 
-// termUnsafe reports whether a term value carries a character of
-// unsafeTermChars or any other control character. Letters of any script,
-// digits, spaces, dots, dashes, brackets and the like are not judged; only
-// the characters in that list are structure for a shell, a comment, a
-// crontab, a path or a JSON document. A regular expression is not judged:
-// its metacharacters are its own, and what it matches is decided by the
-// text. The slash of a network in CIDR form is the one it is meant to have
-// and does not count.
-func termUnsafe(t TermEntry) bool {
+// unsafeTermClass names the class of every character in unsafeTermChars,
+// for the refusal: the report names the class, never the value.
+func unsafeTermClass(r rune) string {
+	switch r {
+	case '\'', '"':
+		return "a quote"
+	case '`':
+		return "a backtick"
+	case '$', ';', '&', '|', '<', '>':
+		return "a shell metacharacter (" + string(r) + ")"
+	case '#':
+		return "a #"
+	case '%':
+		return "a %"
+	case '/':
+		return "a /"
+	case '\\':
+		return "a backslash"
+	}
+	return "a control character"
+}
+
+// termUnsafe names the class of the first character of a term value that is
+// in unsafeTermChars or any other control character, and returns the empty
+// string for a value that carries none. Letters of any script, digits,
+// spaces, dots, dashes, brackets and the like are not judged; only the
+// characters in that list are structure for a shell, a comment, a crontab, a
+// path or a JSON document. A regular expression is not judged: its
+// metacharacters are its own, and what it matches is decided by the text.
+// The slash of a network in CIDR form is the one it is meant to have and
+// does not count, and neither does the slash of a secret: key material and
+// tokens are base64, whose alphabet has the slash, and their pseudonym is an
+// opaque PF_ token that stands where a blob stands, never in a path.
+func termUnsafe(t TermEntry) string {
 	if t.Value == "" {
-		return false
+		return ""
 	}
 	chars := unsafeTermChars
-	if t.Kind == string(detect.KindCIDR) {
+	if t.Kind == string(detect.KindCIDR) || t.Kind == string(detect.KindSecret) {
 		chars = strings.ReplaceAll(chars, "/", "")
 	}
-	if strings.ContainsAny(t.Value, chars) {
-		return true
-	}
 	for _, r := range t.Value {
-		if r < 0x20 || r == 0x7f {
-			return true
+		if strings.ContainsRune(chars, r) || r < 0x20 || r == 0x7f {
+			return unsafeTermClass(r)
 		}
 	}
-	return false
+	return ""
 }
 
 // unsafeTermError describes why a term is refused, without quoting the
-// value: it names the class of character and the place the value would
-// change once restored. The value itself belongs to the list's owner and is
-// not written to the log.
-func unsafeTermError() error {
-	return errors.New("value carries a quote, a backslash, a shell metacharacter ($ ; & | < > backtick), a #, a %, a / or a control character; restored into a command line, a configuration line or a patch that was written for the pseudonym it would change what that line does, see README, Known limits. Write the value as a regular expression if it is meant")
+// value: it names the class of character that was found and the place the
+// value would change once restored. The value itself belongs to the list's
+// owner and is not written to the log.
+func unsafeTermError(class string) error {
+	return errors.New("value carries " + class + "; restored into a command line, a configuration line or a patch that was written for the pseudonym it would change what that line does, see README, Known limits. Refused are a quote, a backslash, a shell metacharacter ($ ; & | < > backtick), a #, a %, a / outside a cidr or secret term, and control characters. Write the value as a regular expression if it is meant")
 }
 
 // parseTermsFile parses the term file format described above.

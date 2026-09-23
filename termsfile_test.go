@@ -221,19 +221,31 @@ func TestTermsFile_UnsafeValues(t *testing.T) {
 		"北京客户", "東京 支店", "Ünal İş", "Ærø Kommune", "Владимир", "Ａｃｍｅ", "客户【42】",
 	}
 	for _, v := range unsafe {
-		if !termUnsafe(TermEntry{Value: v, Kind: "path_segment"}) {
+		if termUnsafe(TermEntry{Value: v, Kind: "path_segment"}) == "" {
 			t.Errorf("%q passed", v)
 		}
 	}
 	for _, v := range safe {
-		if termUnsafe(TermEntry{Value: v, Kind: "person"}) {
-			t.Errorf("%q was refused", v)
+		if class := termUnsafe(TermEntry{Value: v, Kind: "person"}); class != "" {
+			t.Errorf("%q was refused as %s", v, class)
 		}
 	}
-	if termUnsafe(TermEntry{Value: "10.13.0.0/16", Kind: "cidr"}) {
+	if termUnsafe(TermEntry{Value: "10.13.0.0/16", Kind: "cidr"}) != "" {
 		t.Error("the slash of a network was counted")
 	}
-	if termUnsafe(TermEntry{Regex: `kunde/[0-9]+;`, Kind: "path_segment"}) {
+	// Key material and tokens are base64, and base64 has the slash; the
+	// secret pseudonym stands where the blob stands, never in a path.
+	keyMaterial := "AAAAC3NzaC1lZDI1NTE5AAAAIGQ/x+7l" + strings.Repeat("Ab", 8) + "/o="
+	if termUnsafe(TermEntry{Value: keyMaterial, Kind: "secret"}) != "" {
+		t.Error("the slash of a secret was counted")
+	}
+	if termUnsafe(TermEntry{Value: keyMaterial, Kind: "host"}) != "a /" {
+		t.Error("the slash of a host was let through")
+	}
+	if termUnsafe(TermEntry{Value: "a$b", Kind: "secret"}) != "a shell metacharacter ($)" {
+		t.Error("a secret with a dollar sign was let through, or the class is not named")
+	}
+	if termUnsafe(TermEntry{Regex: `kunde/[0-9]+;`, Kind: "path_segment"}) != "" {
 		t.Error("a regular expression was judged")
 	}
 }
@@ -255,8 +267,11 @@ func TestTermsFile_UnsafeValueIsRefusedWithTheLine(t *testing.T) {
 	if err == nil {
 		t.Fatal("a value with an ampersand was accepted")
 	}
-	if !strings.Contains(err.Error(), "line 4") || !strings.Contains(err.Error(), "metacharacter") {
-		t.Errorf("error %q does not name the line and the class", err)
+	if !strings.Contains(err.Error(), "line 4") || !strings.Contains(err.Error(), "value carries a shell metacharacter (&)") {
+		t.Errorf("error %q does not name the line and the class that was found", err)
+	}
+	if strings.Contains(err.Error(), "Meier") {
+		t.Errorf("error %q quotes the value", err)
 	}
 	if strings.Contains(err.Error(), "Meier") {
 		t.Errorf("error %q quotes the value", err)
