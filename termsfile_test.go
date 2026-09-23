@@ -242,6 +242,11 @@ func TestTermsFile_UnsafeValues(t *testing.T) {
 	if termUnsafe(TermEntry{Value: keyMaterial, Kind: "host"}) != "a /" {
 		t.Error("the slash of a host was let through")
 	}
+	// A SHA256 fingerprint is base64 as well, 43 characters after the label.
+	fingerprint := "SHA256:" + strings.Repeat("Qz", 14) + "/d-c60d0c82e19f"
+	if termUnsafe(TermEntry{Value: fingerprint, Kind: "fingerprint"}) != "" {
+		t.Error("the slash of a fingerprint was counted")
+	}
 	if termUnsafe(TermEntry{Value: "a$b", Kind: "secret"}) != "a shell metacharacter ($)" {
 		t.Error("a secret with a dollar sign was let through, or the class is not named")
 	}

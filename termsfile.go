@@ -111,15 +111,17 @@ func unsafeTermClass(r rune) string {
 // path or a JSON document. A regular expression is not judged: its
 // metacharacters are its own, and what it matches is decided by the text.
 // The slash of a network in CIDR form is the one it is meant to have and
-// does not count, and neither does the slash of a secret: key material and
-// tokens are base64, whose alphabet has the slash, and their pseudonym is an
-// opaque PF_ token that stands where a blob stands, never in a path.
+// does not count, and neither does the slash of a secret or a fingerprint:
+// key material, tokens and SHA256 fingerprints are base64, whose alphabet
+// has the slash, and their pseudonyms are opaque tokens that stand where the
+// blob stands, never in a path.
 func termUnsafe(t TermEntry) string {
 	if t.Value == "" {
 		return ""
 	}
 	chars := unsafeTermChars
-	if t.Kind == string(detect.KindCIDR) || t.Kind == string(detect.KindSecret) {
+	switch t.Kind {
+	case string(detect.KindCIDR), string(detect.KindSecret), string(detect.KindFingerprint):
 		chars = strings.ReplaceAll(chars, "/", "")
 	}
 	for _, r := range t.Value {
@@ -135,7 +137,7 @@ func termUnsafe(t TermEntry) string {
 // value would change once restored. The value itself belongs to the list's
 // owner and is not written to the log.
 func unsafeTermError(class string) error {
-	return errors.New("value carries " + class + "; restored into a command line, a configuration line or a patch that was written for the pseudonym it would change what that line does, see README, Known limits. Refused are a quote, a backslash, a shell metacharacter ($ ; & | < > backtick), a #, a %, a / outside a cidr or secret term, and control characters. Write the value as a regular expression if it is meant")
+	return errors.New("value carries " + class + "; restored into a command line, a configuration line or a patch that was written for the pseudonym it would change what that line does, see README, Known limits. Refused are a quote, a backslash, a shell metacharacter ($ ; & | < > backtick), a #, a %, a / outside a cidr, secret or fingerprint term, and control characters. Write the value as a regular expression if it is meant")
 }
 
 // parseTermsFile parses the term file format described above.
