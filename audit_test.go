@@ -95,9 +95,8 @@ func TestAudit_OffByDefaultAndBadPathFails(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "pseudonym.secret"), append(append([]byte{}, fixtures.Secret...), '\n'), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := buildPlugin(raw, dir, nil); err == nil || !strings.Contains(err.Error(), "audit.path") {
-		t.Fatalf("buildPlugin error = %v, want an audit.path error", err)
-	}
+	plugin, err := buildPlugin(raw, dir, nil)
+	assertBlocked(t, plugin, err, "audit.path")
 }
 
 // TestAudit_Rotates: a file above max_bytes is moved to ".1" before the

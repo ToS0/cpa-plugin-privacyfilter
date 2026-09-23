@@ -25,6 +25,14 @@ type privacyFilterPlugin struct {
 	pluginDir string
 	filter    *filter.Filter
 
+	// blocked is the error that stopped the set-up of ModePseudonymize: a
+	// missing secret, an unreadable term list, a refused term. The plugin
+	// registers all the same and answers every request with this error
+	// until the configuration is fixed and the proxy restarted. A failed
+	// registration would leave the host running without the filter, and
+	// the only trace would be one line in its log.
+	blocked error
+
 	// The fields below are built once at registration and only in
 	// ModePseudonymize; in ModeRedact they stay nil and nothing outside
 	// interceptRequest and redactRequestBody ever runs, so that mode keeps
@@ -78,10 +86,32 @@ func (p *privacyFilterPlugin) Identifier() string {
 }
 
 func (p *privacyFilterPlugin) InterceptRequestBeforeAuth(ctx context.Context, req pluginapi.RequestInterceptRequest) (pluginapi.RequestInterceptResponse, error) {
+	if p.blocked != nil {
+		return p.blockedResponse(), nil
+	}
 	if p.cfg.IsPseudonymize() {
 		return p.pseudonymizeRequest(req), nil
 	}
 	return p.interceptRequest(req)
+}
+
+// blockedResponse terminates a request with the error that stopped the
+// set-up, in the same Anthropic-shaped body as forwardFailure, so the client
+// shows it to the user at the first request. Skip lists do not apply: a
+// plugin that could not be set up filters nothing, so nothing may pass. The
+// message names files, lines and classes, never a value of the term list.
+func (p *privacyFilterPlugin) blockedResponse() pluginapi.RequestInterceptResponse {
+	log.Warnf("privacyfilter: blocking the request, the plugin is not set up: %v", p.blocked)
+	headers := http.Header{}
+	headers.Set("Content-Type", "application/json")
+	reason := "not set up, every request is blocked until the configuration is fixed and the proxy restarted: " +
+		strings.TrimPrefix(p.blocked.Error(), "privacyfilter: ")
+	return pluginapi.RequestInterceptResponse{
+		Terminate:       true,
+		StatusCode:      http.StatusBadRequest,
+		ResponseHeaders: headers,
+		ResponseBody:    errorBody(reason),
+	}
 }
 
 // InterceptRequestAfterAuth filters a second time in ModeRedact, as the

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -565,9 +564,8 @@ func TestBuildPlugin_MissingSecretFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal config: %v", err)
 	}
-	if _, err := buildPlugin(raw, dir, nil); err == nil {
-		t.Fatal("expected registration to fail without a secret file")
-	}
+	plugin, err := buildPlugin(raw, dir, nil)
+	assertBlocked(t, plugin, err, "secret")
 }
 
 // TestBuildPlugin_ShortSecretFails: a secret below pseudo.MinSecretLen is
@@ -585,13 +583,8 @@ func TestBuildPlugin_ShortSecretFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal config: %v", err)
 	}
-	_, err = buildPlugin(raw, dir, nil)
-	if err == nil {
-		t.Fatal("expected registration to fail on a short secret")
-	}
-	if !strings.Contains(err.Error(), "32") {
-		t.Fatalf("error = %v, want the minimum length named", err)
-	}
+	plugin, err := buildPlugin(raw, dir, nil)
+	assertBlocked(t, plugin, err, "32")
 }
 
 // TestBuildPlugin_InvalidTermKindFails: an unknown kind in terms[] is caught at
@@ -610,9 +603,8 @@ func TestBuildPlugin_InvalidTermKindFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal config: %v", err)
 	}
-	if _, err := buildPlugin(raw, dir, nil); err == nil {
-		t.Fatal("expected registration to fail on an invalid term kind")
-	}
+	plugin, err := buildPlugin(raw, dir, nil)
+	assertBlocked(t, plugin, err, "invalid kind")
 }
 
 // TestBuildPlugin_TermInThePseudonymRangeIsReplaced: a term whose value
@@ -661,10 +653,8 @@ func TestBuildPlugin_TermInThePseudonymRangeIsReplaced(t *testing.T) {
 				if err != nil {
 					t.Fatalf("marshal config: %v", err)
 				}
-				_, err = buildPlugin(raw, dir, nil)
-				if err == nil || !strings.Contains(err.Error(), "map onto itself") {
-					t.Fatalf("buildPlugin(%q %s) = %v, want the self-mapping refusal", tc.value, tc.kind, err)
-				}
+				plugin, err := buildPlugin(raw, dir, nil)
+				assertBlocked(t, plugin, err, "map onto itself")
 				return
 			}
 			p := newPseudoPlugin(t, map[string]any{
@@ -703,14 +693,15 @@ func TestBuildPlugin_SecretsLayerUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal config: %v", err)
 	}
-	_, err = buildPlugin(raw, dir, nil)
-	if err == nil {
+	plugin, err := buildPlugin(raw, dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plugin.Capabilities.ResponseInterceptor != nil {
 		// Only a binary built with the betterleaks tag gets here.
 		return
 	}
-	if !errors.Is(err, detect.ErrSecretsUnavailable) {
-		t.Fatalf("error = %v, want detect.ErrSecretsUnavailable", err)
-	}
+	assertBlocked(t, plugin, nil, detect.ErrSecretsUnavailable.Error())
 }
 
 // TestRedactMode_Unchanged: the default mode keeps the original behaviour, and

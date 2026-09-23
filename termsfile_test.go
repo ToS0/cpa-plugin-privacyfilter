@@ -130,9 +130,8 @@ func TestPseudonymize_TermsFileMerged(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "s.secret"), []byte(strings.Repeat("ab", 32)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := buildPlugin([]byte(cfgYAML), dir, nil); err == nil || !strings.Contains(err.Error(), "terms_file") {
-		t.Fatalf("buildPlugin with a broken terms file: err = %v, want a terms_file error", err)
-	}
+	plugin, err := buildPlugin([]byte(cfgYAML), dir, nil)
+	assertBlocked(t, plugin, err, "terms_file")
 }
 
 // A '#' inside a value belongs to the value. Cutting the line at every '#'
@@ -194,15 +193,8 @@ func TestTermsFile_KindReportNamesTheLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfgYAML := "mode: pseudonymize\nsalt_secret_path: " + filepath.Join(dir, "s.secret") + "\nterms_file: " + termsPath + "\n"
-	_, err := buildPlugin([]byte(cfgYAML), dir, nil)
-	if err == nil {
-		t.Fatal("a wrong kind was accepted")
-	}
-	for _, want := range []string{"line 4", `"hostname"`, "host, domain", "path_segment"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q does not carry %q", err, want)
-		}
-	}
+	plugin, err := buildPlugin([]byte(cfgYAML), dir, nil)
+	assertBlocked(t, plugin, err, "line 4", `"hostname"`, "host, domain", "path_segment")
 }
 
 // The characters that are structure somewhere: in a shell, a comment, a
@@ -268,22 +260,13 @@ func TestTermsFile_UnsafeValueIsRefusedWithTheLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfgYAML := "mode: pseudonymize" + string(rune(10)) + "salt_secret_path: " + filepath.Join(dir, "s.secret") + string(rune(10)) + "terms_file: " + termsPath + string(rune(10))
-	_, err := buildPlugin([]byte(cfgYAML), dir, nil)
-	if err == nil {
-		t.Fatal("a value with an ampersand was accepted")
-	}
-	if !strings.Contains(err.Error(), "line 4") || !strings.Contains(err.Error(), "value carries a shell metacharacter (&)") {
-		t.Errorf("error %q does not name the line and the class that was found", err)
-	}
-	if strings.Contains(err.Error(), "Meier") {
-		t.Errorf("error %q quotes the value", err)
-	}
-	if strings.Contains(err.Error(), "Meier") {
-		t.Errorf("error %q quotes the value", err)
+	plugin, err := buildPlugin([]byte(cfgYAML), dir, nil)
+	body := assertBlocked(t, plugin, err, "line 4", "value carries a shell metacharacter (&)")
+	if strings.Contains(body, "Meier") {
+		t.Errorf("the client message %q quotes the value", body)
 	}
 
 	inline := "mode: pseudonymize" + string(rune(10)) + "salt_secret_path: " + filepath.Join(dir, "s.secret") + string(rune(10)) + "terms:" + string(rune(10)) + "  - {value: " + string(rune(34)) + "a;b" + string(rune(34)) + ", kind: host}" + string(rune(10))
-	if _, err := buildPlugin([]byte(inline), dir, nil); err == nil || !strings.Contains(err.Error(), "terms[0]") {
-		t.Errorf("an inline value with a semicolon: %v", err)
-	}
+	plugin, err = buildPlugin([]byte(inline), dir, nil)
+	assertBlocked(t, plugin, err, "terms[0]")
 }

@@ -80,19 +80,32 @@ func buildPlugin(configYAML []byte, pluginDir string, rt *runtimeState) (plugina
 		rt:        rt,
 	}
 
+	// In ModeRedact a failure here aborts the registration, as it does in
+	// the original plugin. In ModePseudonymize it does not: the host would
+	// come up without the filter, log one line and forward every request
+	// in clear text, and nobody would see it. So the plugin registers with
+	// the error and blocks every request with it instead, until the
+	// configuration is fixed and the proxy restarted; the user sees the
+	// error in the client at the first request.
 	f, errFilter := newFilter(pluginDir, cfg)
 	if errFilter != nil {
-		return pluginapi.Plugin{}, errFilter
+		if !cfg.IsPseudonymize() {
+			return pluginapi.Plugin{}, errFilter
+		}
+		p.blocked = errFilter
 	}
 	p.filter = f
 
-	if cfg.IsPseudonymize() {
-		if errInit := p.initPseudonymize(); errInit != nil {
-			return pluginapi.Plugin{}, errInit
-		}
+	if cfg.IsPseudonymize() && p.blocked == nil {
+		p.blocked = p.initPseudonymize()
+	}
+	switch {
+	case p.blocked != nil:
+		log.Errorf("privacyfilter registered in blocking state, every request is answered with this error until the configuration is fixed and the proxy restarted: %v", p.blocked)
+	case cfg.IsPseudonymize():
 		log.Infof("privacyfilter registered: mode=%s, %d terms, patterns [%s], packyme=%t, paths=%t, secrets=%t, stream=%t, on_error=%s",
 			cfg.Mode(), p.termCount, enabledPatterns(cfg.Patterns), cfg.Packyme.Enabled, cfg.Path.Enabled, cfg.Secrets.Enabled, cfg.Restore.Stream, cfg.OnError)
-	} else {
+	default:
 		log.Infof("privacyfilter registered: mode=%s, the pseudonymize configuration is inactive", cfg.Mode())
 	}
 
@@ -197,7 +210,7 @@ func buildPlugin(configYAML []byte, pluginDir string, rt *runtimeState) (plugina
 // dereference.
 func capabilitiesFor(p *privacyFilterPlugin) pluginapi.Capabilities {
 	caps := pluginapi.Capabilities{RequestInterceptor: p}
-	if p.cfg.IsPseudonymize() {
+	if p.cfg.IsPseudonymize() && p.blocked == nil {
 		caps.ResponseInterceptor = p
 		caps.RequestLifecyclePlugin = p
 		if p.streams != nil {
@@ -210,8 +223,9 @@ func capabilitiesFor(p *privacyFilterPlugin) pluginapi.Capabilities {
 // initPseudonymize builds everything ModePseudonymize needs once, at
 // registration: the HMAC secret, the detection layers in their order of
 // precedence, the deny list and the store for the mapping tables. Every failure
-// here aborts registration, because a plugin that cannot pseudonymize must not
-// silently forward plain text. The layers are shared by all requests; only the
+// here puts the plugin into the blocking state, because a plugin that cannot
+// pseudonymize must not silently forward plain text, and a failed registration
+// would do exactly that. The layers are shared by all requests; only the
 // Composite around them and the generator are per conversation.
 func (p *privacyFilterPlugin) initPseudonymize() error {
 	secretPath := pseudo.ResolveSecretPath(p.pluginDir, p.cfg.SaltSecretPath)
