@@ -4,10 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
+	"github.com/sirupsen/logrus"
+	logtest "github.com/sirupsen/logrus/hooks/test"
 )
 
 // assertBlocked checks that buildPlugin registered the plugin in the blocking
@@ -58,6 +62,68 @@ func assertBlocked(t *testing.T, plugin pluginapi.Plugin, err error, want ...str
 		}
 	}
 	return message
+}
+
+// The whole path of a bad line in the term file, as the user sees it: the
+// proxy comes up, the log carries one error line at registration that names
+// the line and the class and not the value, and the client gets the same
+// message as a 400 at the first request, with a warning line in the log for
+// each blocked request. The user confirmed the client side on the live
+// system on 23 September 2026; this test holds the plugin side.
+func TestBlocked_BadTermLineIsReportedInLogAndClient(t *testing.T) {
+	hook := logtest.NewGlobal()
+	defer logrus.StandardLogger().ReplaceHooks(make(logrus.LevelHooks))
+
+	dir := t.TempDir()
+	termsPath := filepath.Join(dir, "terms.txt")
+	file := "# hosts" + string(rune(10)) + "p14 host" + string(rune(10)) + "{value: " + string(rune(34)) + "Meier & Sohn" + string(rune(34)) + ", kind: person}" + string(rune(10))
+	if err := os.WriteFile(termsPath, []byte(file), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "s.secret"), []byte(strings.Repeat("ab", 32)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfgYAML := "mode: pseudonymize" + string(rune(10)) + "salt_secret_path: " + filepath.Join(dir, "s.secret") + string(rune(10)) + "terms_file: " + termsPath + string(rune(10))
+	plugin, err := buildPlugin([]byte(cfgYAML), dir, nil)
+
+	var registered *logrus.Entry
+	for _, e := range hook.AllEntries() {
+		if strings.Contains(e.Message, "registered in blocking state") {
+			registered = e
+		}
+	}
+	if registered == nil {
+		t.Fatal("no log line says that the plugin registered in blocking state")
+	}
+	if registered.Level != logrus.ErrorLevel {
+		t.Errorf("the registration line has level %s, want error", registered.Level)
+	}
+	for _, want := range []string{"line 3", "value carries a shell metacharacter (&)", "restarted"} {
+		if !strings.Contains(registered.Message, want) {
+			t.Errorf("the registration line %q does not carry %q", registered.Message, want)
+		}
+	}
+	if strings.Contains(registered.Message, "Meier") {
+		t.Errorf("the registration line %q quotes the value", registered.Message)
+	}
+
+	before := len(hook.AllEntries())
+	message := assertBlocked(t, plugin, err, "line 3", "value carries a shell metacharacter (&)")
+	if strings.Contains(message, "Meier") {
+		t.Errorf("the client message %q quotes the value", message)
+	}
+	var blocked *logrus.Entry
+	for _, e := range hook.AllEntries()[before:] {
+		if strings.Contains(e.Message, "blocking the request") {
+			blocked = e
+		}
+	}
+	if blocked == nil {
+		t.Fatal("no log line says that the request was blocked")
+	}
+	if blocked.Level != logrus.WarnLevel || !strings.Contains(blocked.Message, "line 3") {
+		t.Errorf("the blocked-request line is %s %q, want a warning that names line 3", blocked.Level, blocked.Message)
+	}
 }
 
 // A skipped model or format passes a working plugin unfiltered by the user's

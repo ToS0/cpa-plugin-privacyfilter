@@ -51,6 +51,10 @@ func TestParseTermsFile_Errors(t *testing.T) {
 			t.Errorf("parseTermsFile(%q) accepted", in)
 		} else if !strings.Contains(err.Error(), "line 1") {
 			t.Errorf("parseTermsFile(%q) error %q does not name the line", in, err)
+		} else if strings.Contains(err.Error(), "p14") {
+			// The message reaches the log and, since the blocking state,
+			// the client. It names the line, never what is on it.
+			t.Errorf("parseTermsFile(%q) error %q quotes the line", in, err)
 		}
 	}
 }

@@ -210,8 +210,10 @@ func parseTermsLine(line string) (TermEntry, error) {
 		var entry TermEntry
 		dec := yaml.NewDecoder(strings.NewReader(line))
 		dec.KnownFields(true)
+		// The message names the line and the form, not the text on it:
+		// it reaches the log and, in the blocking state, the client.
 		if err := dec.Decode(&entry); err != nil {
-			return TermEntry{}, fmt.Errorf("invalid entry %q: %w", line, err)
+			return TermEntry{}, fmt.Errorf("invalid yaml entry (want {value: ..., kind: ..., ignore_case: ...} or {regex: ..., kind: ...}): %w", err)
 		}
 		if entry.Kind == "" {
 			entry.Kind = termsFileDefaultKind
@@ -222,7 +224,7 @@ func parseTermsLine(line string) (TermEntry, error) {
 	fields := strings.Fields(line)
 	entry := TermEntry{Value: fields[0], Kind: termsFileDefaultKind}
 	kindSet, flagSet := false, false
-	for _, opt := range fields[1:] {
+	for i, opt := range fields[1:] {
 		switch {
 		case opt == "ignore_case" && !flagSet:
 			entry.IgnoreCase = true
@@ -231,7 +233,9 @@ func parseTermsLine(line string) (TermEntry, error) {
 			entry.Kind = opt
 			kindSet = true
 		default:
-			return TermEntry{}, fmt.Errorf("unexpected word %q in %q (want: <literal> [kind] [ignore_case])", opt, line)
+			// The word itself is not quoted: it may be part of a value
+			// with a space, and the message reaches the client.
+			return TermEntry{}, fmt.Errorf("unexpected word %d of %d on the line (want: <literal> [kind] [ignore_case]; a value with spaces needs the yaml form)", i+2, len(fields))
 		}
 	}
 	return entry, nil
