@@ -7,6 +7,7 @@ package basics
 // directory is not a leak, but it makes every command the model writes fail.
 
 import (
+	"sort"
 	"strings"
 	"testing"
 
@@ -54,6 +55,7 @@ func TestPath_OrdinaryDevelopmentDirectories(t *testing.T) {
 // Every shape a path takes on a terminal has to come back byte for byte.
 func TestPath_ShapesRoundTrip(t *testing.T) {
 	d := newPaths(t, detect.PathsConfig{ReplaceUnknown: true})
+	flat := strings.Join([]string{"", "home", "admin", "kunde-x"}, "-")
 	paths := []string{
 		"/home/admin/kunde/report.pdf",
 		"./relative/kunde/file.txt",
@@ -70,6 +72,12 @@ func TestPath_ShapesRoundTrip(t *testing.T) {
 		"/home/admin/kunde/.hidden",
 		"/home/admin/kunde/über.txt",
 		"$HOME/kunde/bin",
+		"kunde/",
+		".config/kunde/bin",
+		flat,
+		strings.Join([]string{"projects", flat}, "/"),
+		strings.Join([]string{flat, "abc.jsonl"}, "/"),
+		"Input/Output.md",
 		"'/home/admin/kunde/x'",
 	}
 	for _, p := range paths {
@@ -151,6 +159,12 @@ func TestPath_NetGapsForUnknownDirectories(t *testing.T) {
 		"inside a word":       "backup-" + secret + "-2026.tar",
 		"as a bare word":      "das Verzeichnis " + secret + " liegt daneben",
 		"with drive relative": "d:" + secret + `\x.txt`,
+		"trailing slash":      secret + "/",
+		"dot start":           ".config/" + secret + "/bin",
+		"bare directory":      secret + "/sub",
+		"diff header":         "a/" + secret + "/x.go",
+		"flattened":           "-home-user-" + secret,
+		"flattened in a path": "projects/-home-user-" + secret,
 	}
 	var gaps []string
 	for name, text := range shapes {
@@ -158,19 +172,27 @@ func TestPath_NetGapsForUnknownDirectories(t *testing.T) {
 		mid := forward(text, d, tab)
 		if strings.Contains(mid, secret) {
 			gaps = append(gaps, name)
-			t.Logf("%-20s left visible: %s", name, text)
+			t.Logf("%-24s left visible: %s", name, text)
 			continue
 		}
-		t.Logf("%-20s caught:       %s -> %s", name, text, mid)
+		t.Logf("%-24s caught:       %s -> %s", name, text, mid)
 		if got := back(mid, tab); got != text {
 			t.Errorf("%s: round trip: %q -> %q", name, text, got)
 		}
 	}
-	if len(gaps) > 0 {
-		t.Logf("the net does not cover: %s", strings.Join(gaps, ", "))
-		t.Logf("   -> a directory in the term list is caught by the term layer regardless;")
-		t.Logf("      the gaps matter only for the directory nobody listed")
+	sort.Strings(gaps)
+	// The edge of the net as the README states it: a bare directory path
+	// without a file or a closing slash, the a/ of a diff header, Windows,
+	// URLs, and a name that is not a path at all. Every other shape is
+	// caught, and a change here is a change of the README.
+	want := []string{"as a bare word", "bare directory", "diff header", "file url", "http url",
+		"inside a word", "windows", "windows unc", "with drive relative"}
+	if strings.Join(gaps, ",") != strings.Join(want, ",") {
+		t.Errorf("the edge of the net moved:\n got %v\nwant %v", gaps, want)
 	}
+	t.Logf("the net does not cover: %s", strings.Join(gaps, ", "))
+	t.Logf("   -> a directory in the term list is caught by the term layer regardless;")
+	t.Logf("      the gaps matter only for the directory nobody listed")
 }
 
 // A segment that already looks like a pseudonym must not be replaced again,

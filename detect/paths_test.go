@@ -188,3 +188,66 @@ func TestPaths_UnicodeSegments(t *testing.T) {
 		t.Fatalf("Scan = %q", values(got))
 	}
 }
+
+// r joins bare segments into a relative path at run time, for the same
+// reason as j; a trailing empty segment gives the closing slash.
+func r(segs ...string) string { return strings.Join(segs, "/") }
+
+// A bare token is a path when its shape says so: an extension at the end,
+// a slash at the end, a hidden directory in front, a shell variable in
+// front, or a working directory flattened into one name. Prose with a
+// slash, module paths, media types, git refs, package scopes, sed
+// expressions, diff headers and flags are not, and neither is the bare
+// directory path "kunde/sub", which no rule can tell from "km/h".
+func TestPaths_BareShapes(t *testing.T) {
+	d := newPaths(t, detect.PathsConfig{ReplaceUnknown: true})
+	flat := strings.Join([]string{"", "home", "mwendler", "kunde-x"}, "-")
+	flatTmp := strings.Join([]string{"", "tmp", "claude-1234", "kunde-x", "sub"}, "-")
+	caught := map[string]string{
+		r("kunde-x", "vertrag.pdf"):                         "path_segment:kunde-x",
+		r("internal", "kunde-x", "paths_test.go") + ":12:5": "path_segment:kunde-x",
+		"modified:   " + r("kunde-x", "main.go"):            "path_segment:kunde-x",
+		r("kunde-x", ""):                                    "path_segment:kunde-x",
+		"ls " + r("kunde-x", "") + " && pwd":                "path_segment:kunde-x",
+		r(".config", "kunde-x", "bin"):                      "path_segment:kunde-x",
+		"$HOME/" + r("kunde-x", "bin"):                      "path_segment:kunde-x",
+		"$my_dir/" + r("kunde-x", "bin"):                    "path_segment:kunde-x",
+		flat:                                                "path_segment:" + flat,
+		"ls -la " + flat:                                    "path_segment:" + flat,
+		r("projects", flat):                                 "path_segment:projects path_segment:" + flat,
+		r(flat, "abc.jsonl"):                                "path_segment:" + flat,
+		flatTmp:                                             "path_segment:" + flatTmp,
+		"[doc](" + r("kunde-x", "README.md") + ")":          "path_segment:kunde-x",
+		"siehe " + r("kunde-x", "notes.md") + ".":           "path_segment:kunde-x",
+		"--out=" + r("kunde-x", "a.txt"):                    "path_segment:kunde-x",
+		r("Input", "Output.md"):                             "path_segment:Input", // the price of the extension rule
+	}
+	for text, want := range caught {
+		got := d.Scan(text)
+		assertDisjointSorted(t, text, got)
+		if values(got) != want {
+			t.Errorf("Scan(%q) = %q, want %q", text, values(got), want)
+		}
+	}
+	untouched := []string{
+		"and/or, km/h, TCP/IP, Client/Server, Ja/Nein, I/O, w/o",
+		"application/json, text/html, image/svg+xml, application/vnd.ms-excel",
+		"origin/main, feature/kunde-x, refs/heads/main",
+		"github.com/rheodev/x/y.go, golang.org/x/net",
+		"@scope/pkg/index.js",
+		"sed 's/kunde-x/y/g' and y/abc/xyz/",
+		"--- a/kunde-x/x.go",
+		"24/09/2026, 1/2, 3/4.",
+		r("kunde-x", "sub"), // the bare directory path: the edge that stays
+		"a//b, x.y/z.txt, ..foo/x, .../x",
+		"-la -rf -fno-omit-frame-pointer -Wno-unused-but-set-variable",
+		"-var-file=x.tfvars --no-verify -home -home-x",
+		"$HOME und $5/hour und US$100/month",
+		"Version 1.2/rc1",
+	}
+	for _, text := range untouched {
+		if got := d.Scan(text); len(got) != 0 {
+			t.Errorf("Scan(%q) = %q, want nothing", text, values(got))
+		}
+	}
+}

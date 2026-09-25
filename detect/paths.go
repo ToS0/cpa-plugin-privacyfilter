@@ -94,6 +94,8 @@ var defaultPreserve = []string{
 	// source trees and user directories
 	"cmd", "internal", "docs", "doc", "test", "tests", "testdata", "examples", "scripts",
 	"assets", "static", "public", "templates", "migrations", "api", "app", "apps", "web",
+	// media types: "application/vnd.ms-excel" has the shape of a bare path
+	"application", "text", "image", "audio",
 	"Users", "Documents", "Downloads", "Desktop", "Pictures", "Music", "Videos", "Projects",
 	".config", ".local", ".cache", ".git", ".github", ".vscode", ".idea", "node_modules", "vendor",
 	"target", "build", "dist", "out", "obj", "release", "debug", "state", "data", "db",
@@ -138,47 +140,158 @@ var _ Detector = (*pathsDetector)(nil)
 func (d *pathsDetector) Name() string { return "paths" }
 
 // Scan implements Detector. A path begins at a slash, at "~/", "./" or
-// "../" that is not preceded by a letter or digit, so "and/or", "km/h" and
-// "TCP/IP" are prose, and the authority of a URL, which begins with two
-// slashes, is not a path. It runs over segments of letters, digits and the
-// characters ._-~@+% and ends at the first other character.
+// "../" that is not preceded by a segment character, so "and/or", "km/h"
+// and "TCP/IP" are prose, and the authority of a URL, which begins with two
+// slashes, is not a path. It also begins at the slash behind a shell
+// variable, "$HOME/…", and at a bare token whose shape says path, which
+// bareShape decides: a file extension at the end, a slash at the end, a
+// hidden directory in front, or a working directory flattened into one
+// name. It runs over segments of letters, digits and the characters ._-~@+%
+// and ends at the first other character.
 func (d *pathsDetector) Scan(text string) []Match {
-	if text == "" || !strings.Contains(text, "/") {
+	if text == "" || (!strings.Contains(text, "/") && !strings.Contains(text, "-")) {
 		return nil
 	}
 	var out []Match
 	for i := 0; i < len(text); {
-		start, ok := pathStart(text, i)
+		start, end, ok := pathStart(text, i)
 		if !ok {
 			_, size := utf8.DecodeRuneInString(text[i:])
 			i += max(size, 1)
 			continue
 		}
-		end := pathEnd(text, start)
 		out = d.segments(text, start, end, out)
 		i = end
 	}
 	return out
 }
 
-// pathStart reports whether a path begins at text[i].
-func pathStart(text string, i int) (int, bool) {
+// pathStart reports whether a path begins at text[i] and where it ends.
+func pathStart(text string, i int) (start, end int, ok bool) {
+	var prev rune
 	if i > 0 {
-		prev, _ := utf8.DecodeLastRuneInString(text[:i])
-		if isTokenRune(prev) || prev == '/' {
-			return 0, false
-		}
+		prev, _ = utf8.DecodeLastRuneInString(text[:i])
 	}
 	rest := text[i:]
 	switch {
-	case strings.HasPrefix(rest, "//"):
-		return 0, false
+	case strings.HasPrefix(rest, "//"), prev == '/':
+		return 0, 0, false
 	case rest[0] == '/':
-		return i, true
+		// "$HOME/x" is a path from the slash on; "km/h" and ".../x" are
+		// not.
+		if isSegmentRune(prev) && !variableBefore(text, i) {
+			return 0, 0, false
+		}
+		return i, pathEnd(text, i), true
 	case strings.HasPrefix(rest, "~/"), strings.HasPrefix(rest, "./"), strings.HasPrefix(rest, "../"):
-		return i, true
+		// Behind a segment character the prefix is the tail of something
+		// else: the third dot of ".../x" is not "./x".
+		if isSegmentRune(prev) {
+			return 0, 0, false
+		}
+		return i, pathEnd(text, i), true
 	}
-	return 0, false
+	// A bare token begins only at a token boundary. Behind a segment
+	// character it is the tail of a longer token, "example.com/x" seen from
+	// the "com"; behind a dollar it is the name of a variable.
+	if isSegmentRune(prev) || prev == '$' {
+		return 0, 0, false
+	}
+	end = pathEnd(text, i)
+	if end == i || !bareShape(text[i:end]) {
+		return 0, 0, false
+	}
+	return i, end, true
+}
+
+// variableBefore reports whether the word in front of the slash at text[i]
+// is a shell variable, "$HOME" or "$my_dir". A slash behind it begins a
+// path; a slash behind any other word is prose. The name has to begin
+// with a letter or an underscore: "$5/hour" and "US$100/month" are prices.
+func variableBefore(text string, i int) bool {
+	j := i
+	for j > 0 {
+		c := text[j-1]
+		if c == '_' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' {
+			j--
+			continue
+		}
+		break
+	}
+	if j == i || j == 0 || text[j-1] != '$' {
+		return false
+	}
+	c := text[j]
+	return c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
+
+// bareShape reports whether tok, a token that begins with neither a slash,
+// a dot-slash nor a tilde, is a path by its shape alone. Four shapes are:
+// a file extension at the end, "kunde/vertrag.pdf", the way a compiler and
+// git status print a path; a slash at the end, "kunde/", the way ls and
+// git status print a directory; a hidden directory in front,
+// ".claude/projects"; and a working directory flattened into one name,
+// see flattenedPath, on its own or as the last segment. Everything else
+// with a slash is prose or a name that merely looks like a path, "and/or",
+// "km/h", "TCP/IP", "Client/Server", "origin/main", "application/json",
+// and with them the bare directory path "kunde/sub", which no rule can
+// tell from those. A first segment with an inner dot is a host or a module
+// path, "github.com/x/y", and belongs to the term list; a single letter in
+// front is "s/x/y/", "w/o", "I/O" or the "a/" of a diff header; a scope
+// "@org/pkg" is a package; two adjacent slashes never make a bare path.
+func bareShape(tok string) bool {
+	tok = strings.TrimRight(tok, ".")
+	if tok == "" || strings.Contains(tok, "//") {
+		return false
+	}
+	slash := strings.IndexByte(tok, '/')
+	if slash < 0 {
+		return flattenedPath(tok)
+	}
+	first := tok[:slash]
+	if utf8.RuneCountInString(first) < 2 || first[0] == '@' ||
+		strings.IndexByte(first[1:], '.') >= 0 || strings.IndexFunc(first, isTokenRune) < 0 {
+		return false
+	}
+	last := tok[strings.LastIndexByte(tok, '/')+1:]
+	return last == "" || first[0] == '.' || flattenedPath(last) || hasFileExt(last)
+}
+
+// flattenedRoots are the directories a working directory can begin with,
+// as flattenedPath needs them: the roots of the file system hierarchy, the
+// macOS home root and the workspace root of a container.
+var flattenedRoots = map[string]bool{
+	"home": true, "root": true, "usr": true, "etc": true, "var": true, "tmp": true,
+	"srv": true, "mnt": true, "media": true, "opt": true, "run": true,
+	"Users": true, "workspace": true, "workspaces": true,
+}
+
+// flattenedPath reports whether seg is a working directory written as one
+// name, the way Claude Code names the directory that holds a project's
+// transcripts: every slash and every dot of the path becomes a dash, so
+// "/home/user/kunde.x" is "-home-user-kunde-x". Such a name carries the
+// whole directory structure of a workspace in one word. In an absolute
+// path it is one segment and is replaced as a whole; this rule does the
+// same for the bare name, as ls prints it. The name begins with a dash and
+// one of flattenedRoots and carries at least two more parts: one part
+// behind the root is a flag, "-var-file", and a double dash is always a
+// flag. A working directory right under a root, "/tmp/x", is therefore
+// caught in an absolute path only.
+func flattenedPath(seg string) bool {
+	if len(seg) < 2 || seg[0] != '-' || seg[1] == '-' {
+		return false
+	}
+	parts := strings.Split(seg[1:], "-")
+	if !flattenedRoots[parts[0]] {
+		return false
+	}
+	n := 0
+	for _, p := range parts[1:] {
+		if p != "" {
+			n++
+		}
+	}
+	return n >= 2
 }
 
 // pathEnd returns the offset just past the last segment character of the
@@ -251,6 +364,10 @@ func (d *pathsDetector) classify(seg string, last bool) (Kind, bool) {
 	}
 	if !d.cfg.ReplaceUnknown && !d.cfg.Known[seg] {
 		return "", false
+	}
+	if flattenedPath(seg) {
+		// A flattened working directory is a directory whatever it ends in.
+		return KindPathSegment, true
 	}
 	if last && hasFileExt(seg) {
 		if !d.cfg.AllFilenames {
