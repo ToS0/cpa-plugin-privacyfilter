@@ -7,6 +7,7 @@ import (
 
 	"github.com/rheodev/cpa-plugin-privacyfilter/mapping"
 	"github.com/rheodev/cpa-plugin-privacyfilter/payload"
+	"github.com/rheodev/cpa-plugin-privacyfilter/pseudo"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 	log "github.com/sirupsen/logrus"
 )
@@ -53,7 +54,7 @@ func (p *privacyFilterPlugin) InterceptResponse(ctx context.Context, req plugina
 		return resp, nil
 	}
 
-	out, restored, err := restoreResponseBody(req.Body, table, p.deny)
+	out, restored, unknown, err := restoreResponseBody(req.Body, table, p.deny)
 	if err != nil {
 		log.Warnf("privacyfilter: response not restored, passing it through: %v", err)
 		return resp, nil
@@ -63,33 +64,61 @@ func (p *privacyFilterPlugin) InterceptResponse(ctx context.Context, req plugina
 		"restored":      restored,
 		"distinct":      table.Len(),
 		"body_bytes":    len(req.Body),
+		"unknown":       len(unknown),
+		"unknown_hits":  countHits(unknown),
 	}
-	if restored == 0 {
+	p.audit.unknown(req.RequestID, unknown)
+	if restored > 0 {
+		resp.Body = out
+	}
+	switch {
+	case restored > 0:
+		log.WithFields(fields).Info("privacyfilter: response restored")
+	case len(unknown) > 0:
+		// The model wrote tokens in the plugin's shape that no table row
+		// explains, an invented name or a pseudonym quoted from a file.
+		// They go to the client as they are; the restorer never guesses.
+		log.WithFields(fields).Info("privacyfilter: response carried pseudonym shapes without a table row")
+	default:
 		// Nothing to say at Info: the table may be empty, or the model did
 		// not repeat any of the values. The body goes back as it came.
 		if log.IsLevelEnabled(log.DebugLevel) {
 			log.WithFields(fields).Debug("privacyfilter: response carried no pseudonym")
 		}
-		return resp, nil
 	}
-	resp.Body = out
-	log.WithFields(fields).Info("privacyfilter: response restored")
 	return resp, nil
 }
 
 // restoreResponseBody replaces pseudonyms in every string of a Messages
-// response body that deny allows and returns the new body and the number of
-// strings that changed. Panics in the payload or mapping code are turned
-// into errors so the host never fuses the plugin because of one odd
-// response.
-func restoreResponseBody(body []byte, table *mapping.Table, deny *payload.DenyList) (out []byte, restored int, err error) {
+// response body that deny allows and returns the new body, the number of
+// strings that changed, and by token how often the restored strings still
+// carry a token in the plugin's own shape, which no table row explains;
+// see pseudo.ShapedTokens. Panics in the payload or mapping code are
+// turned into errors so the host never fuses the plugin because of one
+// odd response.
+func restoreResponseBody(body []byte, table *mapping.Table, deny *payload.DenyList) (out []byte, restored int, unknown map[string]int, err error) {
 	defer recoverInto(&err, errRestorePanic)
 	r := table.Restorer()
-	return payload.ReplaceStrings(body, deny, func(_ payload.Path, text string) (string, bool) {
+	unknown = map[string]int{}
+	out, restored, err = payload.ReplaceStrings(body, deny, func(_ payload.Path, text string) (string, bool) {
 		// The decoded string is plain text, not a JSON fragment, so the
 		// originals go in unescaped; ReplaceStrings re-encodes the value.
-		return r.Restore(text, false)
+		text, changed := r.Restore(text, false)
+		for _, tok := range pseudo.ShapedTokens(text) {
+			unknown[tok]++
+		}
+		return text, changed
 	})
+	return out, restored, unknown, err
+}
+
+// countHits sums the counts of a token map.
+func countHits(m map[string]int) int {
+	n := 0
+	for _, c := range m {
+		n += c
+	}
+	return n
 }
 
 // recoverInto turns a panic into an error wrapped around sentinel, keeping

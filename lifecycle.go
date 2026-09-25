@@ -21,11 +21,14 @@ func (p *privacyFilterPlugin) HandleRequestComplete(ctx context.Context, done pl
 		return nil
 	}
 	table, hits, _ := p.store.Complete(done.RequestID)
+	if p.streams != nil {
+		// The tokens a stream delivered in the plugin's shape without a
+		// table row go to the audit log in front of the closing line; a
+		// whole response wrote its own when it was restored.
+		p.audit.unknown(done.RequestID, p.streams.finish(done.RequestID, done.Stream))
+	}
 	if p.audit != nil {
 		p.audit.complete(done.RequestID, done, table, hits)
-	}
-	if p.streams != nil {
-		p.streams.finish(done.RequestID, done.Stream)
 	}
 	if log.IsLevelEnabled(log.DebugLevel) {
 		log.WithFields(log.Fields{

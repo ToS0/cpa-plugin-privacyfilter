@@ -17,8 +17,9 @@ import (
 // auditLog is the local record of what the pseudonymize mode did, for the
 // operator's eyes only. The ordinary log carries counts and never a value;
 // this file carries the values: for every request the mapping table as
-// "kind, original, pseudonym", and at completion which pseudonyms the
-// return path swapped back and how often. It is therefore a clear-text
+// "kind, original, pseudonym", at completion which pseudonyms the return
+// path swapped back and how often, and which tokens in the plugin's own
+// shape it delivered without a row behind them. It is therefore a clear-text
 // copy of everything the plugin protects and exists only while the
 // operator wants to check the plugin's work; the file is created with mode
 // 0600 and rotated once to ".1" when it exceeds maxBytes.
@@ -118,6 +119,31 @@ func (a *auditLog) complete(requestID string, done pluginapi.RequestCompletion, 
 	}
 	fmt.Fprintf(&b, "%s\tcomplete\t%s\toutcome=%s\tstream=%t\trestored_distinct=%d\trestored_total=%d\n",
 		now, id, done.Outcome, done.Stream, len(keys), total)
+	a.write(b.String())
+}
+
+// unknown records the tokens a response or a stream delivered in the
+// plugin's own shape without a table row behind them, one "unknown" line
+// per token with its count, sorted by token. Such a token is no value of
+// the user's: it is a name the model invented in the shape, a pseudonym it
+// recalled with slipped digits, or one of another conversation quoted from
+// a file, and the line against the "map" lines of the session is what lets
+// the operator tell these apart. Nothing is written when there is none.
+func (a *auditLog) unknown(requestID string, tokens map[string]int) {
+	if a == nil || len(tokens) == 0 {
+		return
+	}
+	id := auditID(requestID)
+	var b strings.Builder
+	now := time.Now().Format(time.RFC3339)
+	keys := make([]string, 0, len(tokens))
+	for k := range tokens {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		fmt.Fprintf(&b, "%s\tunknown\t%s\t%s\t%d\n", now, id, auditField(k), tokens[k])
+	}
 	a.write(b.String())
 }
 

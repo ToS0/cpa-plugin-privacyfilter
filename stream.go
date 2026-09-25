@@ -10,6 +10,7 @@ import (
 
 	"github.com/rheodev/cpa-plugin-privacyfilter/mapping"
 	"github.com/rheodev/cpa-plugin-privacyfilter/payload"
+	"github.com/rheodev/cpa-plugin-privacyfilter/pseudo"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 	log "github.com/sirupsen/logrus"
 )
@@ -44,6 +45,11 @@ type streamState struct {
 	// deltas, for the log line at message_stop.
 	restored int
 	flushed  int
+	// unknown counts, by token, what the delivered text still carries in
+	// the plugin's own shape after the restore; see pseudo.ShapedTokens. A
+	// token cut in two by a fragment boundary is not seen, so the count is
+	// a floor.
+	unknown map[string]int
 	// missing is set when no table exists for the request, so the miss is
 	// logged once and every further chunk passes through quietly.
 	missing bool
@@ -73,17 +79,19 @@ func (s *streams) put(requestID string, st *streamState) {
 	s.states[requestID] = st
 }
 
-// finish drops the state of a completed request and writes the log line of
-// the stream: how many events were restored and how many synthetic deltas
-// flushed the holdback. A holdback that is still pending here was never
-// flushed, which means the upstream ended the stream without a stop event.
-func (s *streams) finish(requestID string, stream bool) {
+// finish drops the state of a completed request, writes the log line of
+// the stream: how many events were restored, how many synthetic deltas
+// flushed the holdback, and how many tokens in the plugin's shape no table
+// row explained, and returns those tokens with their counts for the audit
+// log. A holdback that is still pending here was never flushed, which
+// means the upstream ended the stream without a stop event.
+func (s *streams) finish(requestID string, stream bool) map[string]int {
 	s.mu.Lock()
 	st := s.states[requestID]
 	delete(s.states, requestID)
 	s.mu.Unlock()
 	if st == nil || !stream || st.missing {
-		return
+		return nil
 	}
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -93,19 +101,35 @@ func (s *streams) finish(requestID string, stream bool) {
 			pending++
 		}
 	}
-	fields := log.Fields{"restored": st.restored, "flushed": st.flushed}
-	if pending > 0 {
+	fields := log.Fields{
+		"restored": st.restored, "flushed": st.flushed,
+		"unknown": len(st.unknown), "unknown_hits": countHits(st.unknown),
+	}
+	switch {
+	case pending > 0:
 		fields["unflushed_blocks"] = pending
 		log.WithFields(fields).Warn("privacyfilter: stream ended with text still held back")
-		return
-	}
-	if st.restored == 0 {
+	case st.restored > 0:
+		log.WithFields(fields).Info("privacyfilter: stream restored")
+	case len(st.unknown) > 0:
+		log.WithFields(fields).Info("privacyfilter: stream carried pseudonym shapes without a table row")
+	default:
 		if log.IsLevelEnabled(log.DebugLevel) {
 			log.WithFields(fields).Debug("privacyfilter: stream carried no pseudonym")
 		}
-		return
 	}
-	log.WithFields(fields).Info("privacyfilter: stream restored")
+	return st.unknown
+}
+
+// count adds the tokens of text that still have the plugin's shape after
+// the restore to the unknown counter; see pseudo.ShapedTokens.
+func (st *streamState) count(text string) {
+	for _, tok := range pseudo.ShapedTokens(text) {
+		if st.unknown == nil {
+			st.unknown = map[string]int{}
+		}
+		st.unknown[tok]++
+	}
 }
 
 // prune drops the state of every stream whose table the store no longer
@@ -190,7 +214,7 @@ func (p *privacyFilterPlugin) newStreamState(requestID string) *streamState {
 		log.Warnf("privacyfilter: no mapping table for the stream, passing it through with pseudonyms")
 		return &streamState{missing: true}
 	}
-	return &streamState{restorer: table.Restorer(), holds: make(map[int]*blockHold)}
+	return &streamState{restorer: table.Restorer(), holds: make(map[int]*blockHold), unknown: map[string]int{}}
 }
 
 // chunk restores the events of one chunk. It returns the new chunk body,
@@ -254,7 +278,11 @@ func (st *streamState) snapshot() streamSnapshot {
 	for i, h := range st.holds {
 		holds[i] = *h
 	}
-	return streamSnapshot{holds: holds, restored: st.restored, flushed: st.flushed}
+	unknown := make(map[string]int, len(st.unknown))
+	for k, v := range st.unknown {
+		unknown[k] = v
+	}
+	return streamSnapshot{holds: holds, restored: st.restored, flushed: st.flushed, unknown: unknown}
 }
 
 // restore puts a snapshot back.
@@ -264,7 +292,7 @@ func (st *streamState) restore(s streamSnapshot) {
 		hold := h
 		st.holds[i] = &hold
 	}
-	st.restored, st.flushed = s.restored, s.flushed
+	st.restored, st.flushed, st.unknown = s.restored, s.flushed, s.unknown
 }
 
 // streamSnapshot is the state of a stream before a chunk, by value.
@@ -272,6 +300,7 @@ type streamSnapshot struct {
 	holds    map[int]blockHold
 	restored int
 	flushed  int
+	unknown  map[string]int
 }
 
 // event returns the bytes to deliver for one event, and keep == false when
@@ -298,6 +327,7 @@ func (st *streamState) event(ev payload.Event) (raw []byte, keep bool, err error
 
 	if !payload.Streamed(ev) {
 		restored, changed := st.restorer.Restore(text, field.Escaped)
+		st.count(restored)
 		if !changed {
 			return ev.Raw, true, nil
 		}
@@ -320,6 +350,7 @@ func (st *streamState) event(ev payload.Event) (raw []byte, keep bool, err error
 		// harmless but pointless; the event is dropped instead.
 		return nil, false, nil
 	}
+	st.count(restored)
 	if changed {
 		st.restored++
 	}
@@ -357,6 +388,7 @@ func (st *streamState) flushBefore(raw []byte, index int) []byte {
 		if restored == "" {
 			continue
 		}
+		st.count(restored)
 		if changed {
 			st.restored++
 		}
