@@ -362,7 +362,7 @@ What the model writes first stays as it is. A directory the model creates with `
 ### Known limits
 
 - Only the Anthropic Messages schema is handled on the return path; the plugin logs a warning and passes other formats through unchanged. Register it with `skip_formats` for those formats if you want no forward filtering either.
-- Thinking blocks are never touched in either direction. Their signature is bound to the text, so a summary in the client's thinking view shows the pseudonyms, not the originals.
+- Thinking blocks are never touched in either direction. Their signature is bound to the text, so a summary in the client's thinking view shows the pseudonyms, not the originals. A client that shows the thinking inline, as T3 Code does, puts pseudonyms in the middle of an otherwise restored conversation; the tool calls that follow carry the originals.
 - A person pseudonym for a lone surname is rendered as a given name, so a surname used on its own may read as a second given name in the model's answer.
 - A term matches at word boundaries, and the underscore is a boundary: `nuc_old` and `NUC_HOST` contain the host `nuc`. Letters and digits bind, so `nucleus` does not. A percent-escape in front is a boundary although it ends in a hex digit: `Kunden%20nuc` contains `nuc`, and a pseudonym behind `%20` or `%2F` is restored.
 - Addresses outside every configured network are spread over the whole marker range without any relation to each other. Add your networks as `cidr` terms if the model has to reason about them.
