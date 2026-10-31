@@ -303,7 +303,7 @@ Fields read in `pseudonymize` mode only. With `mode: redact` they are ignored an
 | `terms_file`             | string | `""`           | The term list, see [The term list](#the-term-list). A relative path resolves from the plugin directory.                                                                                                                                                                                                                   |
 | `patterns`               | object | all on but url | Structural detectors: `ipv4`, `ipv6`, `cidr`, `mac`, `email`, `iban`, `uuid`, `hexid`, `fingerprint`, `serial` default to `true`; `url` is off. `uuid` covers disk and machine UUIDs, `hexid` 32-digit and `0x`-prefixed 16-digit hex ids such as a WWN or machine-id, `fingerprint` SSH host-key fingerprints (`SHA256:…`), `serial` a serial number that follows a label such as `Serial Number:`, `ID_SERIAL_SHORT=`, `"serial":`, `iSerial`, `Seriennummer:` or `s/n:`. `ipv4`, `ipv6` and `email` also govern what the packyme layer reports, see [Switching detectors off](#switching-detectors-off). |
 | `path`                   | object | disabled       | Segment-wise path pseudonymization, see [Paths and file names](#paths-and-file-names): `enabled` (default `false`), `replace_unknown` (default `true`, every directory outside the preserve list is replaced; `false` replaces only directories that are also terms), `filenames` (`terms`, the default, replaces a file name only where a term matches inside it; `all` replaces every file name outside the preserve list), `preserve` (names added to the built-in list of ordinary segments such as `home`, `usr`, `src`). |
-| `packyme`                | object | enabled        | `enabled` toggles the packyme/privacy-filter layer with the gitleaks rules.                                                                                                                                                                                                                                                |
+| `packyme`                | object | enabled        | `enabled` toggles the packyme/privacy-filter layer with the gitleaks rules. Its three digit rules switch off one by one: `phone` (mainland Chinese mobile numbers), `id` (18-digit identity numbers) and `bank_card` (Luhn-valid runs of 13 to 19 digits, which takes one in ten timestamps of that length as well), each `true` by default, see [Switching detectors off](#switching-detectors-off). |
 | `secrets`                | object | disabled       | `enabled` and `rules_toml` for the betterleaks layer. Only effective in a binary built with the `betterleaks` tag; enabling it in a plain build blocks every request with an error until it is switched off.                                                                                                                                                         |
 | `restore.stream`         | bool   | `true`         | Restore pseudonyms in streamed responses. Non-streamed responses are always restored.                                                                                                                                                                                                                                     |
 | `limits.max_body_bytes`  | int    | `33554432`     | Request bodies above this size are rejected.                                                                                                                                                                                                                                                                              |
@@ -328,6 +328,19 @@ Every structural detector has its own switch under `patterns`. Someone who works
 ```
 
 The switches reach every layer. The original plugin's detection has no switches of its own and reports IP addresses and e-mail addresses next to its credential rules; with `ipv4`, `ipv6` or `email` set to `false` its findings of that kind are dropped as well, so a value of a switched-off kind is replaced by no layer. The term list is the exception: an entry with `kind: ipv4` or `kind: cidr` is replaced whatever the switches say, because you put it there. If `machine-ids.py` collected addresses you do not want replaced, strike them from the file.
+
+The original detection also brings three rules for digits, built for Chinese users: `phone` for mainland mobile numbers, `id` for 18-digit identity numbers and `bank_card` for any run of 13 to 19 digits that passes the Luhn check. The last one takes one in ten timestamps, byte counts and pseudo-version dates of that length, and the model then sees an opaque token where it would have calculated with a number. Each switches off under `packyme`:
+
+```yaml
+    privacyfilter:
+      mode: pseudonymize
+      packyme:
+        phone: false
+        id: false
+        bank_card: false
+```
+
+A finding of this layer that touches a letter or a digit, a run of digits inside a file name or a credential rule that ends on the space behind the value, is trimmed of its edge whitespace and widened to the whole word before it is replaced, and the widened word becomes an opaque token: the return path restores no pseudonym that continues a word, so a pseudonym glued to one would reach you as it is.
 
 Switching a layer off as a whole works the same way: `packyme.enabled: false` drops the original detection with its credential, phone and bank card rules, `path.enabled: false` leaves directories alone, `secrets.enabled` governs betterleaks. Every change needs a proxy restart, and a conversation that was started before the change should be started afresh, because its pseudonyms change with the settings.
 

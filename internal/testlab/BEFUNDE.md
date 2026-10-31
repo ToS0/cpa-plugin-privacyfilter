@@ -420,6 +420,24 @@ Behoben mit `d8fa7b5`.
 
 ---
 
+# Ein Fund der Bibliothek klebt am Wort
+
+Anlass war ein Bericht vom 31. Oktober über Pseudonyme in Sitzungen, wo Originale stehen sollten; bei der Suche nach der Ursache fiel diese Klasse auf. Die gemeldeten trugen die Form `d-`, die der Pfadebene und der Domains, diese Klasse trifft das opake Token `PF_`; der Bericht ist damit nicht erklärt. Ein Rundlauf über den Server mit `v0.4.19-dev` zeigte sie: eine Luhn-gültige Zahl aus dreizehn Ziffern, einmal frei und einmal in einen Dateinamen geklebt, wurde beide Male ersetzt, das Modell gab wieder, was es sah, und die freie kam als Original zurück, die geklebte als Pseudonym, links wie rechts verklebt. Kein Zähler sah es: `unknown` zählt nur Token, die auf Grenzen stehen, und eine Antwort ohne Restaurierung und ohne `unknown` schreibt keine Zeile.
+
+Die Ursache liegt in der Bibliothek und ist älter als der Wechsel von packyme, dessen Regeln dieselben waren. Ihre drei Ziffernregeln, die Kartennummer nach Luhn über 13 bis 19 Ziffern, die Ausweisnummer mit 18 Stellen und die Mobilnummer mit elf, grenzen nur gegen Ziffern ab, ein Buchstabe davor oder dahinter gilt als Grenze; und eine gitleaks-Regel nimmt das Leerzeichen hinter dem Wert als Abschluss in den Treffer, sodass das Pseudonym am nächsten Wort klebt. Beides schrieb der Hinweg an einen Buchstaben, und der Rückweg restauriert nichts, was ein Wort fortsetzt. Jeder Typ außer E-Mail und Adresse wird zu `secret`, also traf es immer das opake Token. Die Regel für Kartennummern trifft dabei jede zehnte Zahl ihrer Länge, Zeitstempel in Millisekunden und die Datumsteile von Go-Pseudoversionen eingeschlossen; in einer `go.mod` waren genau die zwei Luhn-gültigen von sechs ersetzt.
+
+Reproduktion: `TestRoundTrip_FindingsTouchingAWordComeBack` im Wurzelpaket schickt die geklebte Zahl und die Zugangsdatenzeile durch den Hinweg, die Antwort am Stück und den Stream an jeder Trennstelle als `text_delta` und als `input_json_delta`; ohne die Kur scheitern beide, die freie Zahl hält. In `detect` halten `TestPackyme_GluedDigitRunWidensToItsToken`, `TestPackyme_CredentialLeavesTheSpaceBehindIt` und `TestPackyme_EveryMatchStandsOnTokenBoundaries` die Spannen fest, `TestPackyme_DigitTogglesDropFindings` die Schalter.
+
+Gewicht: kein Leck, der Wert ging nie hinaus. Der Nutzer sah aber ein Pseudonym, wo ein Dateiname oder eine Zeile stehen sollte, und ein Werkzeugaufruf mit diesem Namen schrieb unter falschem Namen oder fand nichts.
+
+Kur: `NewPackyme` kürzt jeden Treffer der Bibliothek um den Leerraum an seinen Rändern und verlängert ihn dann, bis kein Buchstabe und keine Ziffer ihn berührt, nach der Grenzregel des Rückwegs samt Prozent-Escape davor; ein verlängerter Treffer ist keine Adresse und keine E-Mail-Adresse mehr und wird zum opaken Token. Dazu schalten `packyme.phone`, `packyme.id` und `packyme.bank_card` die drei Ziffernregeln im Pseudonymize-Modus einzeln ab; sie stehen auf `true`, damit sich ohne Konfiguration nichts ändert.
+
+Verworfen: verklebte Treffer fallen lassen, weil ein Zugangsdatum dann im Klartext hinausginge, und die Grenzregel des Rückwegs für das opake Token lockern, weil sie für alle Arten aus demselben Grund gilt. Nicht geklärt: die verklebte Zugangsdatenzeile kam in drei Schreibaufrufen live als Original zurück, obwohl Test und Quelltext das ausschließen; Ziffern in derselben Lage kamen es nicht.
+
+Behoben mit `f74df30`.
+
+---
+
 # Beobachtungen ohne Fehlerstatus
 
 `Walk` verwarf alles, was nach der schließenden Klammer stand, sobald eine Ersetzung stattfand: aus `{"a":"zeus.lan"}trailing` wurde `{"a":"h-0123456789ab"}`, und aus zwei aufeinanderfolgenden Objekten blieb das erste. Der Produktionsweg war davon nicht betroffen, weil `ReplaceStrings` denselben Body mit `body is not a JSON object` ablehnt und auf dem Hinweg `on_error: block` gilt. Seit `4947e0d` teilen sich beide Funktionen den Scanner, und `Walk` lehnt solche Bytes genauso ab; `TestWalk_TrailingBytesAfterObject` hält das fest.

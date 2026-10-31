@@ -303,7 +303,7 @@ plugins:
 | `terms_file`            | string | `""`         | 词条列表，见[词条列表](#词条列表)。相对路径基于插件目录解析。                                                                                                        |
 | `patterns`              | object | 除 url 外全部开启   | 结构化检测器：`ipv4`、`ipv6`、`cidr`、`mac`、`email`、`iban`、`uuid`、`hexid`、`fingerprint`、`serial` 默认 `true`；`url` 关闭。`uuid` 覆盖磁盘和机器 UUID，`hexid` 覆盖 32 位及 `0x` 前缀的 16 位十六进制标识（如 WWN、machine-id），`fingerprint` 覆盖 SSH 主机密钥指纹（`SHA256:…`），`serial` 覆盖跟在 `Serial Number:`、`ID_SERIAL_SHORT=`、`"serial":`、`iSerial`、`Seriennummer:`、`s/n:` 等标签之后的序列号。`ipv4`、`ipv6`、`email` 同时决定 packyme 层报告什么，见[关闭检测器](#关闭检测器)。 |
 | `path`                  | object | 关闭           | 按路径段假名化，见[路径与文件名](#路径与文件名)：`enabled`（默认 `false`）、`replace_unknown`（默认 `true`，替换保留列表之外的所有目录；`false` 时只替换同时是词条的目录）、`filenames`（默认 `terms`，只在词条匹配处替换文件名；`all` 替换保留列表之外的所有文件名）、`preserve`（在内置常见段名列表如 `home`、`usr`、`src` 之外追加保留的名字）。 |
-| `packyme`               | object | 开启           | `enabled` 控制使用 gitleaks 规则的 packyme/privacy-filter 层。                                                                                             |
+| `packyme`               | object | 开启           | `enabled` 控制使用 gitleaks 规则的 packyme/privacy-filter 层。它的三条数字规则可以分别关闭：`phone`（中国大陆手机号）、`id`（18 位身份证号）和 `bank_card`（通过 Luhn 校验的 13 至 19 位数字串，同样长度的时间戳也有十分之一会被命中），默认都为 `true`，见[关闭检测器](#关闭检测器)。 |
 | `secrets`               | object | 关闭           | betterleaks 层的 `enabled` 和 `rules_toml`。只在带 `betterleaks` 标签构建的二进制中有效；在普通构建中开启会让插件以错误拦截每一个请求，直到关闭它。                                                              |
 | `restore.stream`        | bool   | `true`       | 在流式响应中还原假名。非流式响应总是被还原。                                                                                                                           |
 | `limits.max_body_bytes` | int    | `33554432`   | 超过此大小的请求体被拒绝。                                                                                                                                    |
@@ -328,6 +328,19 @@ plugins:
 ```
 
 这些开关作用于每一层。原插件的检测没有自己的开关，会在凭据规则之外报告 IP 地址和邮箱；把 `ipv4`、`ipv6` 或 `email` 设为 `false` 后，它报告的同类结果也会被丢弃，所以被关掉的 kind 不会被任何一层替换。词条列表是例外：`kind: ipv4` 或 `kind: cidr` 的条目不管开关如何都会被替换，因为是你放进去的。如果 `machine-ids.py` 收集了你不想替换的地址，从文件里划掉它们。
+
+原有检测还带有三条数字规则：`phone` 匹配中国大陆手机号，`id` 匹配 18 位身份证号，`bank_card` 匹配任何通过 Luhn 校验的 13 至 19 位数字串。最后一条会命中同样长度的时间戳、字节数和伪版本日期中的十分之一，模型看到的就是一个不透明的标记，而不是可以计算的数字。三条规则都可以在 `packyme` 下单独关闭：
+
+```yaml
+    privacyfilter:
+      mode: pseudonymize
+      packyme:
+        phone: false
+        id: false
+        bank_card: false
+```
+
+这一层的结果如果紧贴字母或数字，例如文件名中的一串数字，或者凭据规则把值后面的空格也算了进去，替换前会先去掉首尾空白，再扩展到整个词，扩展后的词成为一个不透明的标记：还原路径不会还原接在词上的假名，紧贴着词的假名会原样到达你这里。
 
 整层关闭的方式相同：`packyme.enabled: false` 去掉原有检测及其凭据、电话和银行卡规则，`path.enabled: false` 不再动目录，`secrets.enabled` 控制 betterleaks。每次修改都需要重启代理，修改前开始的会话应当重新开始，因为它的假名会随设置改变。
 
