@@ -135,6 +135,35 @@ skip_formats:
 	}
 }
 
+// A packyme block that only turns the digit rules off must leave the library
+// itself on; the rollout writes exactly this block.
+func TestParseConfig_DigitSwitchesKeepTheLibraryOn(t *testing.T) {
+	cfg, err := parseConfig(nil)
+	if err != nil {
+		t.Fatalf("parseConfig(nil) error = %v", err)
+	}
+	if !cfg.Packyme.Phone || !cfg.Packyme.ID || !cfg.Packyme.BankCard {
+		t.Fatalf("defaults: phone=%t id=%t bank_card=%t, want all true", cfg.Packyme.Phone, cfg.Packyme.ID, cfg.Packyme.BankCard)
+	}
+
+	raw := `
+packyme:
+  phone: false
+  id: false
+  bank_card: false
+`
+	cfg, err = parseConfig([]byte(raw))
+	if err != nil {
+		t.Fatalf("parseConfig() error = %v", err)
+	}
+	if !cfg.Packyme.Enabled {
+		t.Fatal("Packyme.Enabled = false, want true (a block without enabled keeps the default)")
+	}
+	if cfg.Packyme.Phone || cfg.Packyme.ID || cfg.Packyme.BankCard {
+		t.Fatalf("phone=%t id=%t bank_card=%t, want all false", cfg.Packyme.Phone, cfg.Packyme.ID, cfg.Packyme.BankCard)
+	}
+}
+
 func TestParseConfig_FullPseudonymizeBlock(t *testing.T) {
 	raw := `
 enabled: true
