@@ -66,7 +66,7 @@ func forward(t *testing.T, headers http.Header, body []byte) pipeline {
 		t.Fatalf("NewPaths: %v", err)
 	}
 	table := store.Open(session.ID, gen)
-	det := detect.NewComposite(table.Knows, terms, patterns, detect.NewPackyme(f, detect.PackymeConfig{IPv4: true, IPv6: true, Email: true}), paths)
+	det := detect.NewComposite(table.Knows, terms, patterns, detect.NewPackyme(f, detect.PackymeConfig{IPv4: true, IPv6: true, Email: true, Phone: true, ID: true, BankCard: true}), paths)
 
 	out, _, err := payload.Walk(body, payload.WalkOptions{}, func(p payload.Path, text string) (string, bool) {
 		matches := det.Scan(text)

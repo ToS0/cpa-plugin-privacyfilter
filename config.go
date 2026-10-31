@@ -131,9 +131,18 @@ type PathConfig struct {
 	Filenames string `yaml:"filenames"`
 }
 
-// PackymeConfig switches the packyme/privacy-filter detection layer.
+// PackymeConfig switches the packyme/privacy-filter detection layer and,
+// within it, the library's three digit rules, named after the type ids it
+// reports: phone (mainland Chinese mobile numbers), id (18-digit identity
+// numbers) and bank_card (Luhn-valid runs of 13 to 19 digits, which takes
+// one in ten timestamps and dates of that length as well). They default to
+// true and act in pseudonymize mode only; redact mode keeps the original
+// plugin's behaviour.
 type PackymeConfig struct {
-	Enabled bool `yaml:"enabled"`
+	Enabled  bool `yaml:"enabled"`
+	Phone    bool `yaml:"phone"`
+	ID       bool `yaml:"id"`
+	BankCard bool `yaml:"bank_card"`
 }
 
 // SecretsConfig switches the betterleaks detection layer. It has an effect
@@ -294,7 +303,10 @@ func defaultConfig() privacyFilterConfig {
 			Filenames:      PathFilenamesTerms,
 		},
 		Packyme: PackymeConfig{
-			Enabled: true,
+			Enabled:  true,
+			Phone:    true,
+			ID:       true,
+			BankCard: true,
 		},
 		Secrets: SecretsConfig{
 			Enabled: false,

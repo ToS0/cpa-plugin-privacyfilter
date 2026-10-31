@@ -185,7 +185,7 @@ func pluginMetadata() pluginapi.Metadata {
 			{
 				Name:        "packyme",
 				Type:        pluginapi.ConfigFieldTypeObject,
-				Description: "Toggle for the packyme/privacy-filter detection layer: enabled (default true).",
+				Description: "Toggles for the packyme/privacy-filter detection layer: enabled (default true), and in pseudonymize mode its digit rules phone (mainland Chinese mobile numbers), id (18-digit identity numbers) and bank_card (Luhn-valid runs of 13 to 19 digits, timestamps included), each default true.",
 			},
 			{
 				Name:        "secrets",
@@ -383,9 +383,12 @@ func (p *privacyFilterPlugin) initPseudonymize() error {
 		// none of its own, and a user who switches ipv4 off expects no
 		// address to be replaced by any layer.
 		layers = append(layers, detect.NewPackyme(p.filter, detect.PackymeConfig{
-			IPv4:  p.cfg.Patterns.IPv4,
-			IPv6:  p.cfg.Patterns.IPv6,
-			Email: p.cfg.Patterns.Email,
+			IPv4:     p.cfg.Patterns.IPv4,
+			IPv6:     p.cfg.Patterns.IPv6,
+			Email:    p.cfg.Patterns.Email,
+			Phone:    p.cfg.Packyme.Phone,
+			ID:       p.cfg.Packyme.ID,
+			BankCard: p.cfg.Packyme.BankCard,
 		}))
 	}
 	if p.cfg.Path.Enabled {
