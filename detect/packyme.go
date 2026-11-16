@@ -99,9 +99,41 @@ func (p *packymeDetector) Scan(text string) []Match {
 			(specialAddr(text[start:end]) || markerOpens(text, start, end)) {
 			continue
 		}
+		if strings.IndexByte(text[start:end], '\n') >= 0 {
+			// A credential rule that allows whitespace between a key and
+			// its separator, or one that matches a whole block such as a
+			// private key, reaches across line breaks, and one token over
+			// several lines takes the line structure from the model. Every
+			// line of the finding becomes a token of its own. Cutting the
+			// finding down to its last line instead would let the body of a
+			// private key out, and the library does not say which rule hit.
+			hits = splitLines(hits, text, start, end)
+			continue
+		}
 		hits = append(hits, Match{Start: start, End: end, Value: text[start:end], Kind: kind, Source: "packyme"})
 	}
 	return Merge(hits)
+}
+
+// splitLines appends a match of KindSecret for every line of
+// text[start:end] that holds more than whitespace, trimmed at both ends the
+// way fitToTokens trims a finding. Only a credential rule can match across
+// a line break, so the kind is always the opaque token.
+func splitLines(hits []Match, text string, start, end int) []Match {
+	for s := start; s < end; {
+		e := end
+		if i := strings.IndexByte(text[s:end], '\n'); i >= 0 {
+			e = s + i
+		}
+		line := text[s:e]
+		ls := s + len(line) - len(strings.TrimLeftFunc(line, unicode.IsSpace))
+		le := s + len(strings.TrimRightFunc(line, unicode.IsSpace))
+		if ls < le {
+			hits = append(hits, Match{Start: ls, End: le, Value: text[ls:le], Kind: KindSecret, Source: "packyme"})
+		}
+		s = e + 1
+	}
+	return hits
 }
 
 // keeps applies the kind toggles of PackymeConfig. Every kind the config

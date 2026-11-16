@@ -340,7 +340,7 @@ The original detection also brings three rules for digits, built for Chinese use
         bank_card: false
 ```
 
-A finding of this layer that touches a letter or a digit, a run of digits inside a file name or a credential rule that ends on the space behind the value, is trimmed of its edge whitespace and widened to the whole word before it is replaced, and the widened word becomes an opaque token: the return path restores no pseudonym that continues a word, so a pseudonym glued to one would reach you as it is.
+A finding of this layer that touches a letter or a digit, a run of digits inside a file name or a credential rule that ends on the space behind the value, is trimmed of its edge whitespace and widened to the whole word before it is replaced, and the widened word becomes an opaque token: the return path restores no pseudonym that continues a word, so a pseudonym glued to one would reach you as it is. A credential finding that spans several lines, a private key block or a key name followed by blank lines and an `=` on the next line, is replaced line by line: every line that holds more than whitespace becomes a token of its own, so the model keeps the lines and no line of the block leaves in clear.
 
 Switching a layer off as a whole works the same way: `packyme.enabled: false` drops the original detection with its credential, phone and bank card rules, `path.enabled: false` leaves directories alone, `secrets.enabled` governs betterleaks. Every change needs a proxy restart, and a conversation that was started before the change should be started afresh, because its pseudonyms change with the settings.
 
