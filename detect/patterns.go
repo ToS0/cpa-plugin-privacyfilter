@@ -58,9 +58,9 @@ type PatternsConfig struct {
 // NewPatterns builds the structural detector. It reports each hit with the
 // kind of its category and Source "patterns". A candidate whose kind is
 // disabled is not reported at all, so a disabled category never shadows a
-// hit of another layer. Loopback, unspecified and multicast addresses are
-// reported like any other address; excluding them is the caller's business
-// via Composite.Exclude.
+// hit of another layer. Addresses that identify no machine are not reported,
+// see specialAddr, and neither are the two ranges of the address pseudonyms
+// written whole, see markerRanges.
 func NewPatterns(cfg PatternsConfig) (Detector, error) {
 	return &patternsDetector{cfg: cfg}, nil
 }
@@ -179,20 +179,27 @@ func (p *patternsDetector) Scan(text string) []Match {
 	// seeing loopback, the unspecified address, broadcast, multicast,
 	// link-local and the documentation ranges for what they are; see
 	// specialAddr. A term of the maintained list still wins over this rule.
+	// The same goes for the two ranges of the address pseudonyms written
+	// whole, and the address that opens such a notation is not reported on
+	// its own either; an address inside them is. See markerRanges.
 	ordinary := func(s, e int) bool { return dottedRun(s, e) && !specialAddr(text[s:e]) }
 	if p.cfg.CIDR {
-		collect(text, rxCIDR4, ordinary, func(s, e int) { add(s, e, KindCIDR, prioCIDR) })
+		collect(text, rxCIDR4,
+			func(s, e int) bool { return ordinary(s, e) && !IsMarkerRange(text[s:e]) },
+			func(s, e int) { add(s, e, KindCIDR, prioCIDR) })
 		collect(text, rxCIDR4Mask, ordinary, func(s, e int) { add(s, e, KindCIDR, prioCIDR) })
 		collect(text, rxCIDR4Wild,
 			func(s, e int) bool { return dottedRun(s, e) && strings.Contains(text[s:e], "*") },
 			func(s, e int) { add(s, e, KindCIDR, prioCIDR) })
 	}
 	if p.cfg.IPv4 {
-		collect(text, rxIPv4, ordinary, func(s, e int) { add(s, e, KindIPv4, prioIPv4) })
+		collect(text, rxIPv4,
+			func(s, e int) bool { return ordinary(s, e) && !markerOpens(text, s, e) },
+			func(s, e int) { add(s, e, KindIPv4, prioIPv4) })
 	}
 	if p.cfg.IPv6 || p.cfg.CIDR {
 		scanIPv6(text, colonRun, func(s, e int) {
-			if specialAddr(text[s:e]) {
+			if specialAddr(text[s:e]) || markerOpens(text, s, e) {
 				return
 			}
 			if p.cfg.IPv6 {
@@ -250,9 +257,6 @@ func (p *patternsDetector) Scan(text string) []Match {
 	return mergeCandidates(cands)
 }
 
-// serialPlausible reports whether v reads as a device serial: at least one
-// letter and one digit. A bare number after a serial label is a DNS zone
-// serial or a counter, a bare word is prose ("serial: console").
 // specialAddr reports whether s, an address or a network in CIDR form,
 // lies in a range that identifies no machine: loopback, unspecified,
 // broadcast, multicast, link-local and the documentation prefixes of RFC
@@ -297,6 +301,58 @@ var specialPrefixes = []netip.Prefix{
 	netip.PrefixFrom(netip.AddrFrom16([16]byte{0x20, 0x01, 0x0d, 0xb8}), 32),
 }
 
+// markerRanges are the two ranges package pseudo draws the address
+// pseudonyms from: carrier-grade NAT space (RFC 6598) and a fixed unique
+// local /48. Written whole, address and prefix length, such a range names no
+// machine; it is what the model reads in a manual, a firewall rule or the
+// source of this plugin, and the only pseudonym the table could give it is
+// the range itself with a collision suffix. Package pseudo imports this one,
+// so the values are repeated here, built from octets like specialPrefixes,
+// and a test of package pseudo holds them equal to its own.
+var markerRanges = []netip.Prefix{
+	netip.PrefixFrom(netip.AddrFrom4([4]byte{100, 64, 0, 0}), 10),
+	netip.PrefixFrom(netip.AddrFrom16([16]byte{0xfd, 0xff, 0x50, 0x46, 0x53, 0x46}), 48),
+}
+
+// IsMarkerRange reports whether s is exactly one of markerRanges in CIDR
+// notation, in any spelling netip accepts. A host address with the same
+// length, a different length or a mask notation is not. The mapping table
+// asks it too: the forward pass leaves such a range in the clear, so a
+// pseudonym equal to one would restore every mention of the range to the
+// value behind it.
+func IsMarkerRange(s string) bool {
+	p, err := netip.ParsePrefix(s)
+	if err != nil {
+		return false
+	}
+	for _, m := range markerRanges {
+		if p == m {
+			return true
+		}
+	}
+	return false
+}
+
+// markerOpens reports whether the address text[s:e] opens one of
+// markerRanges written whole: a slash and a prefix length of up to three
+// digits follow, the notation stands on token boundaries, and address and
+// length are exactly those of the range. Every layer that reports bare
+// addresses asks this, so the address part of such a notation is not
+// replaced when the network is left alone.
+func markerOpens(text string, s, e int) bool {
+	if e >= len(text) || text[e] != '/' {
+		return false
+	}
+	end := e + 1
+	for end < len(text) && end-e <= 3 && isDigitByte(text[end]) {
+		end++
+	}
+	return end > e+1 && hasTokenBoundaries(text, s, end) && IsMarkerRange(text[s:end])
+}
+
+// serialPlausible reports whether v reads as a device serial: at least one
+// letter and one digit. A bare number after a serial label is a DNS zone
+// serial or a counter, a bare word is prose ("serial: console").
 func serialPlausible(v string) bool {
 	letter, digit := false, false
 	for i := 0; i < len(v); i++ {

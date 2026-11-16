@@ -20,7 +20,7 @@ func TestPackyme_UsesEntitiesNotRedacted(t *testing.T) {
 	if d == nil {
 		t.Fatal("NewPackyme returned nil")
 	}
-	text := "my email is test@example.com and ip 203.0.113.9"
+	text := "my email is test@example.com and ip " + q(10, 20, 30, 40)
 	got := d.Scan(text)
 	assertDisjointSorted(t, text, got)
 	var email, ip bool
@@ -29,7 +29,7 @@ func TestPackyme_UsesEntitiesNotRedacted(t *testing.T) {
 		case detect.KindEmail:
 			email = x.Value == "test@example.com"
 		case detect.KindIPv4:
-			ip = x.Value == "203.0.113.9"
+			ip = x.Value == q(10, 20, 30, 40)
 		}
 		if x.Source != d.Name() {
 			t.Fatalf("Source = %q, want %q", x.Source, d.Name())

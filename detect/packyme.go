@@ -90,6 +90,15 @@ func (p *packymeDetector) Scan(text string) []Match {
 			// the opaque token renders it.
 			kind = KindSecret
 		}
+		// The library knows no address that names nothing. The structural
+		// layer leaves those alone, and the address part of a marker range
+		// with them, and a later layer must not replace what it left: the
+		// library runs last and has no span of the structural layer to
+		// yield to.
+		if (kind == KindIPv4 || kind == KindIPv6) &&
+			(specialAddr(text[start:end]) || markerOpens(text, start, end)) {
+			continue
+		}
 		hits = append(hits, Match{Start: start, End: end, Value: text[start:end], Kind: kind, Source: "packyme"})
 	}
 	return Merge(hits)

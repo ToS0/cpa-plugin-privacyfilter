@@ -181,7 +181,14 @@ func (t *Table) Lookup(kind detect.Kind, value string) string {
 	for {
 		pseudonym = t.render(kind, value, attempt)
 		_, taken := t.byPseudonym[pseudonym]
-		if !taken && t.originals[pseudonym] == 0 && pseudonym != value && (t.avoid == nil || !t.avoid(pseudonym)) {
+		// A marker range of the address pseudonyms is what every attempt
+		// renders for a network of the range's length, an IPv4 /10 or an
+		// IPv6 /48, and the forward pass leaves the range itself in the
+		// clear; handed out, it would make the way back restore every
+		// mention of the range to that network. Such a network gets the
+		// range with the collision suffix instead.
+		if !taken && t.originals[pseudonym] == 0 && pseudonym != value && !detect.IsMarkerRange(pseudonym) &&
+			(t.avoid == nil || !t.avoid(pseudonym)) {
 			break
 		}
 		attempt++
