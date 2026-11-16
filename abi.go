@@ -47,6 +47,7 @@ import "C"
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -68,9 +69,26 @@ var privacyFilterABIState = struct {
 	// shares, created by the first registration and never replaced while
 	// the library is loaded; see runtimeState in main.go.
 	runtime *runtimeState
+	// onError is the on_error setting of the instance registered last. It
+	// survives Shutdown, so a request hook that arrives while the plugin is
+	// shutting down is answered as configured; before the first registration
+	// it is empty, and failureResponse blocks.
+	onError OnError
 }{}
 
 const maxCGoBytesLen = C.size_t(1<<31 - 1)
+
+// The host forwards the original body whenever a request hook returns an
+// error, so the two request hooks never return one: the failures below are
+// answered by failureResponse under on_error instead. The other hooks keep
+// returning errors, because the return path passes through on error anyway.
+var (
+	errPluginShuttingDown  = errors.New("privacyfilter plugin is shutting down")
+	errPluginNotRegistered = errors.New("privacyfilter plugin is not registered")
+	// errHostRequest marks a request hook payload the plugin cannot decode,
+	// the case a host update that changes the RPC contract would produce.
+	errHostRequest = errors.New("privacyfilter: request from the host not readable")
+)
 
 type abiEnvelope struct {
 	OK     bool            `json:"ok"`
@@ -253,15 +271,22 @@ func PrivacyFilterPluginCall(method *C.char, request *C.uint8_t, requestLen C.si
 		writeABIResponse(response, abiErrorEnvelope("invalid_method", "method is required"))
 		return 0
 	}
+	name := C.GoString(method)
 	var requestBytes []byte
 	if request != nil && requestLen > 0 {
 		if requestLen > maxCGoBytesLen {
+			if isRequestHook(name) {
+				if raw, errFailure := requestHookFailure(fmt.Errorf("%w (payload over 2 GiB)", errHostRequest)); errFailure == nil {
+					writeABIResponse(response, raw)
+					return 0
+				}
+			}
 			writeABIResponse(response, abiErrorEnvelope("request_too_large", "request payload is too large"))
 			return 0
 		}
 		requestBytes = C.GoBytes(unsafe.Pointer(request), C.int(requestLen))
 	}
-	raw, errHandle := handlePrivacyFilterABIMethod(context.Background(), C.GoString(method), requestBytes)
+	raw, errHandle := handlePrivacyFilterABIMethod(context.Background(), name, requestBytes)
 	if errHandle != nil {
 		writeABIResponse(response, abiErrorEnvelope("plugin_error", errHandle.Error()))
 		return 0
@@ -295,19 +320,18 @@ func handlePrivacyFilterABIMethod(ctx context.Context, method string, request []
 
 	p, done, errPlugin := beginPrivacyFilterPluginCall()
 	if errPlugin != nil {
+		if isRequestHook(method) {
+			return requestHookFailure(errPlugin)
+		}
 		return nil, errPlugin
 	}
 	defer done()
 
 	switch method {
 	case pluginabi.MethodRequestInterceptBefore:
-		return abiCall(request, func(req abiRequestInterceptRequest) (pluginapi.RequestInterceptResponse, error) {
-			return p.InterceptRequestBeforeAuth(withHostCallbackID(ctx, req.HostCallbackID), req.RequestInterceptRequest)
-		})
+		return abiRequestHook(ctx, request, p.InterceptRequestBeforeAuth)
 	case pluginabi.MethodRequestInterceptAfter:
-		return abiCall(request, func(req abiRequestInterceptRequest) (pluginapi.RequestInterceptResponse, error) {
-			return p.InterceptRequestAfterAuth(withHostCallbackID(ctx, req.HostCallbackID), req.RequestInterceptRequest)
-		})
+		return abiRequestHook(ctx, request, p.InterceptRequestAfterAuth)
 	case pluginabi.MethodResponseInterceptAfter:
 		return abiCall(request, func(req pluginapi.ResponseInterceptRequest) (pluginapi.ResponseInterceptResponse, error) {
 			return p.InterceptResponse(ctx, req)
@@ -338,6 +362,50 @@ func abiCall[Req, Resp any](request []byte, fn func(Req) (Resp, error)) ([]byte,
 		return nil, errCall
 	}
 	return abiOKEnvelope(resp)
+}
+
+func isRequestHook(method string) bool {
+	return method == pluginabi.MethodRequestInterceptBefore || method == pluginabi.MethodRequestInterceptAfter
+}
+
+// abiRequestHook serves the two request hooks. Unlike abiCall it does not
+// return a decode error or an error of the hook to the host, which would
+// forward the original body; requestHookFailure answers both under on_error.
+func abiRequestHook(ctx context.Context, request []byte, hook func(context.Context, pluginapi.RequestInterceptRequest) (pluginapi.RequestInterceptResponse, error)) ([]byte, error) {
+	var req abiRequestInterceptRequest
+	if errDecode := json.Unmarshal(request, &req); errDecode != nil {
+		return requestHookFailure(fmt.Errorf("%w (%s)", errHostRequest, decodeErrorClass(errDecode)))
+	}
+	resp, errHook := hook(withHostCallbackID(ctx, req.HostCallbackID), req.RequestInterceptRequest)
+	if errHook != nil {
+		return requestHookFailure(errHook)
+	}
+	return abiOKEnvelope(resp)
+}
+
+// requestHookFailure answers a request hook the plugin could not serve with
+// the on_error setting of the instance registered last, see failureResponse.
+func requestHookFailure(err error) ([]byte, error) {
+	privacyFilterABIState.RLock()
+	onError := privacyFilterABIState.onError
+	privacyFilterABIState.RUnlock()
+	return abiOKEnvelope(failureResponse(onError, err))
+}
+
+// decodeErrorClass names what kind of decode error the host's payload caused,
+// with the byte offset or the field path and the JSON kind, never a byte of
+// the payload, because the message goes to the log.
+func decodeErrorClass(err error) string {
+	var syntax *json.SyntaxError
+	var mismatch *json.UnmarshalTypeError
+	switch {
+	case errors.As(err, &syntax):
+		return fmt.Sprintf("syntax error at byte %d", syntax.Offset)
+	case errors.As(err, &mismatch):
+		return fmt.Sprintf("JSON %s at %q, want %s", mismatch.Value, mismatch.Field, mismatch.Type)
+	default:
+		return "decode failed"
+	}
 }
 
 // handlePrivacyFilterRegister serves plugin.register and plugin.reconfigure.
@@ -388,6 +456,7 @@ func handlePrivacyFilterRegister(ctx context.Context, method string, request []b
 	privacyFilterABIState.Lock()
 	privacyFilterABIState.plugin = p
 	privacyFilterABIState.shuttingDown = false
+	privacyFilterABIState.onError = p.cfg.OnError
 	privacyFilterABIState.Unlock()
 	return abiOKEnvelope(newABIRegistration(plugin.Metadata, plugin.Capabilities))
 }
@@ -412,10 +481,10 @@ func beginPrivacyFilterPluginCall() (*privacyFilterPlugin, func(), error) {
 	privacyFilterABIState.Lock()
 	defer privacyFilterABIState.Unlock()
 	if privacyFilterABIState.shuttingDown {
-		return nil, nil, fmt.Errorf("privacyfilter plugin is shutting down")
+		return nil, nil, errPluginShuttingDown
 	}
 	if privacyFilterABIState.plugin == nil {
-		return nil, nil, fmt.Errorf("privacyfilter plugin is not registered")
+		return nil, nil, errPluginNotRegistered
 	}
 	privacyFilterABIState.inFlight.Add(1)
 	return privacyFilterABIState.plugin, privacyFilterABIState.inFlight.Done, nil

@@ -593,23 +593,39 @@ func (p *privacyFilterPlugin) forward(session pseudo.Session, key string, table 
 	return res, nil
 }
 
-// forwardFailure applies the on_error setting. With block the request is
-// terminated with an Anthropic-shaped error body, with passthrough it goes on
-// unfiltered, as the original plugin always did.
+// forwardFailure applies the on_error setting of this instance, see
+// failureResponse.
 func (p *privacyFilterPlugin) forwardFailure(err error) pluginapi.RequestInterceptResponse {
-	if p.cfg.OnError == OnErrorPassthrough {
+	return failureResponse(p.cfg.OnError, err)
+}
+
+// failureResponse applies an on_error setting to a request the plugin could
+// not filter. With block, and with no setting at all, the request is
+// terminated with an Anthropic-shaped error body; with passthrough it goes on
+// unfiltered, as the original plugin always did. The ABI layer calls it too,
+// for a request hook it cannot hand to an instance, because the host forwards
+// the original body whenever a request hook returns an error.
+//
+// A plugin that is shutting down or not yet registered answers 503, so the
+// client retries once the proxy is up again; every other failure answers 400.
+func failureResponse(onError OnError, err error) pluginapi.RequestInterceptResponse {
+	if onError == OnErrorPassthrough {
 		log.Warnf("privacyfilter: %v, forwarding the request unfiltered (on_error=passthrough)", err)
 		return pluginapi.RequestInterceptResponse{}
 	}
 
 	log.Warnf("privacyfilter: %v, blocking the request (on_error=block)", err)
+	status := http.StatusBadRequest
+	if errors.Is(err, errPluginShuttingDown) || errors.Is(err, errPluginNotRegistered) {
+		status = http.StatusServiceUnavailable
+	}
 	headers := http.Header{}
 	headers.Set("Content-Type", "application/json")
 	return pluginapi.RequestInterceptResponse{
 		Terminate:       true,
-		StatusCode:      http.StatusBadRequest,
+		StatusCode:      status,
 		ResponseHeaders: headers,
-		ResponseBody:    errorBody(forwardReason(err)),
+		ResponseBody:    errorBodyFor(status, forwardReason(err)),
 	}
 }
 
@@ -624,6 +640,10 @@ func forwardReason(err error) string {
 		return "request body exceeds the configured size limit"
 	case errors.Is(err, errForwardPanic):
 		return "internal error while filtering the request"
+	case errors.Is(err, errPluginShuttingDown), errors.Is(err, errPluginNotRegistered):
+		return "the filter is not ready, retry in a moment"
+	case errors.Is(err, errHostRequest):
+		return "the proxy handed over a request the filter cannot read"
 	default:
 		return "failed to filter the request"
 	}
@@ -643,9 +663,19 @@ type apiError struct {
 }
 
 func errorBody(reason string) []byte {
+	return errorBodyFor(http.StatusBadRequest, reason)
+}
+
+// errorBodyFor renders the error body for a status: invalid_request_error
+// below 500, api_error from 500 on, as the Messages API does.
+func errorBodyFor(status int, reason string) []byte {
+	errType := "invalid_request_error"
+	if status >= http.StatusInternalServerError {
+		errType = "api_error"
+	}
 	out, err := json.Marshal(apiError{
 		Type:  "error",
-		Error: apiErrorDetail{Type: "invalid_request_error", Message: "privacyfilter: " + reason},
+		Error: apiErrorDetail{Type: errType, Message: "privacyfilter: " + reason},
 	})
 	if err != nil {
 		return []byte(`{"type":"error","error":{"type":"invalid_request_error","message":"privacyfilter: failed to filter the request"}}`)

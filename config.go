@@ -27,8 +27,10 @@ const (
 	ModePseudonymize Mode = "pseudonymize"
 )
 
-// OnError selects the forward-path behaviour when detection or JSON parsing
-// fails. OnErrorBlock, the default, terminates the request via Terminate;
+// OnError selects the forward-path behaviour when the plugin cannot filter a
+// request: detection or JSON parsing fails, the host hands over a request hook
+// payload the plugin cannot decode, or the plugin is shutting down.
+// OnErrorBlock, the default, terminates the request via Terminate;
 // OnErrorPassthrough forwards the body unfiltered. The return path always
 // passes through on error, regardless of this setting.
 type OnError string
