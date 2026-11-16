@@ -36,6 +36,18 @@ func (p *privacyFilterPlugin) InterceptResponse(ctx context.Context, req plugina
 	if len(req.Body) == 0 || req.RequestID == "" {
 		return resp, nil
 	}
+	if answersNoModelRequest(req) && !p.store.Has(req.RequestID) {
+		// The host's own answer, the model list: it carries no pseudonym,
+		// and either warning below would be false for it. "no mapping
+		// table" is the alarm for a table lost across a reload, and a false
+		// one on every model list would wear it out. A request id with a
+		// table goes on to be restored, whatever fields the host filled.
+		if log.IsLevelEnabled(log.DebugLevel) {
+			log.WithFields(log.Fields{"source_format": req.SourceFormat, "body_bytes": len(req.Body)}).
+				Debug("privacyfilter: response answers no model request, nothing to restore")
+		}
+		return resp, nil
+	}
 	if req.SourceFormat != payload.FormatClaude {
 		// The forward pass does not gate on the format, so a request of
 		// another format was pseudonymized and now goes back unrestored.
@@ -87,6 +99,17 @@ func (p *privacyFilterPlugin) InterceptResponse(ctx context.Context, req plugina
 		}
 	}
 	return resp, nil
+}
+
+// answersNoModelRequest reports whether the host built the response itself
+// rather than relaying one of the upstream to a request the forward path saw.
+// CLIProxyAPI does that for the model list: WriteModelListResponse at v8.0.67
+// and v8.0.75 passes an empty model and requested model and neither the
+// original request nor the request body, while applyResponseInterceptors,
+// the path of every relayed response, passes the request it relays. All four
+// must be empty, so a relayed response whose table was lost still warns.
+func answersNoModelRequest(req pluginapi.ResponseInterceptRequest) bool {
+	return req.Model == "" && req.RequestedModel == "" && len(req.OriginalRequest) == 0 && len(req.RequestBody) == 0
 }
 
 // restoreResponseBody replaces pseudonyms in every string of a Messages
